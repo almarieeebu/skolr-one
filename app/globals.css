@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+/* Design tokens: a calm paper-like background, deep teal for action,
+   warm amber for "waiting on you". */
+@theme {
+  --color-paper: #f6f5f1;
+  --color-surface: #ffffff;
+  --color-ink: #1c2430;
+  --color-muted: #5f6b7a;
+  --color-line: #e3e1da;
+  --color-brand: #0f6b62;
+  --color-brand-dark: #0a524b;
+  --color-brand-soft: #e3f1ee;
+  --color-wait: #b45309;
+  --color-wait-soft: #fdf3e2;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+  --font-sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Focus ring that is easy to see on every control. */
+:where(button, a, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
