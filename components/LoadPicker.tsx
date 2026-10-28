@@ -104,22 +104,22 @@ export default function LoadPicker({
                 <span className="min-w-0 flex-1 text-sm">
                   <span className="flex flex-wrap items-baseline justify-between gap-x-2">
                     <span className="font-medium">
-                      {isCollege && <span className="mr-1.5 font-mono text-xs text-muted">{o.code}</span>}
+                      {isCollege && <span className="mr-1.5 num text-xs text-muted">{o.code}</span>}
                       {o.title}
                     </span>
                     {isCollege && <span className="text-xs text-muted">{o.units} units</span>}
                   </span>
                   <span className="mt-0.5 block text-xs text-muted">
-                    {formatSchedule(o)} · {o.room}
-                    {o.lab_fee > 0 && ` · lab ${peso(o.lab_fee)}`}
-                    {o.is_major && " · major"}
-                    {" · "}
+                    {formatSchedule(o)}, {o.room}
+                    {o.lab_fee > 0 && `, lab ${peso(o.lab_fee)}`}
+                    {o.is_major && ", major"}
+                    {". "}
                     <span className={left === 0 ? "font-medium text-danger" : ""}>
                       {left === 0 ? "Full" : `${left} ${isCollege ? "slots" : "seats"} left`}
                     </span>
                   </span>
                   {o.prerequisite_codes.length > 0 && (
-                    <span className="mt-1 inline-block rounded bg-paper px-1.5 py-0.5 text-[11px] text-muted">
+                    <span className="mt-1 inline-block rounded bg-paper px-1.5 py-0.5 text-xs text-muted">
                       Needs {o.prerequisite_codes.join(", ")}
                     </span>
                   )}

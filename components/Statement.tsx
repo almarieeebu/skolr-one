@@ -25,7 +25,7 @@ export default function Statement({ detail, session }: { detail: EnrollmentDetai
           <p className="text-zinc-600">School code {school.code}</p>
         </div>
         <div className="text-right">
-          <p className="text-base font-semibold tracking-wide uppercase">Statement of account</p>
+          <p className="text-base font-semibold">Statement of account</p>
           <p className="text-zinc-600">As of {today}</p>
         </div>
       </header>
@@ -33,14 +33,14 @@ export default function Statement({ detail, session }: { detail: EnrollmentDetai
       <dl className="mt-3 grid grid-cols-2 gap-x-8 gap-y-0.5">
         <div className="flex gap-2"><dt className="w-24 text-zinc-600">Student</dt><dd className="font-semibold">{fullName(s)}</dd></div>
         <div className="flex gap-2"><dt className="w-24 text-zinc-600">Student ID</dt><dd>{s.student_no ?? "—"}</dd></div>
-        <div className="flex gap-2"><dt className="w-24 text-zinc-600">{e.track === "college" ? "Program" : "Grade"}</dt><dd>{e.track === "college" ? `${e.course ?? ""} · ${e.level}` : `${e.level}${e.strand ? ` · ${e.strand}` : ""}`}</dd></div>
+        <div className="flex gap-2"><dt className="w-24 text-zinc-600">{e.track === "college" ? "Program" : "Grade"}</dt><dd>{e.track === "college" ? `${e.course ?? ""} ${e.level}` : `${e.level}${e.strand ? ` ${e.strand}` : ""}`}</dd></div>
         <div className="flex gap-2"><dt className="w-24 text-zinc-600">Term</dt><dd>{termLabel(term)}</dd></div>
         {e.track === "k12" && e.tuition_plan && (
           <div className="flex gap-2"><dt className="w-24 text-zinc-600">Plan</dt><dd>{PLAN_INFO[e.tuition_plan].label}</dd></div>
         )}
       </dl>
 
-      <h2 className="mt-5 mb-1 font-semibold uppercase">Assessment</h2>
+      <h2 className="mt-5 mb-1 font-semibold">Assessment</h2>
       <table className="w-full">
         <tbody>
           {f.previous > 0 && (
@@ -53,7 +53,7 @@ export default function Statement({ detail, session }: { detail: EnrollmentDetai
         </tbody>
       </table>
 
-      <h2 className="mt-5 mb-1 font-semibold uppercase">Payments</h2>
+      <h2 className="mt-5 mb-1 font-semibold">Payments</h2>
       {detail.payments.length === 0 ? (
         <p className="text-zinc-600">No payments yet.</p>
       ) : (
@@ -75,7 +75,7 @@ export default function Statement({ detail, session }: { detail: EnrollmentDetai
 
       {f.installments.length > 0 && (
         <>
-          <h2 className="mt-5 mb-1 font-semibold uppercase">Payment schedule</h2>
+          <h2 className="mt-5 mb-1 font-semibold">Payment schedule</h2>
           <table className="w-full">
             <thead className="text-left text-zinc-600"><tr><th className={cell}>Due</th><th className={cell}>For</th><th className={`${cell} text-right`}>Amount</th><th className={`${cell} text-right`}>Paid</th><th className={`${cell} text-right`}>Status</th></tr></thead>
             <tbody>
@@ -101,7 +101,7 @@ export default function Statement({ detail, session }: { detail: EnrollmentDetai
           )}
         </dl>
       </div>
-      <p className="mt-6 text-[10px] text-zinc-500">
+      <p className="mt-6 text-xs text-zinc-500">
         System-generated statement. Please bring this statement when paying at the cashier. Official receipts (OR) are the proof of payment.
       </p>
     </section>

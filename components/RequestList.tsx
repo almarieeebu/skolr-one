@@ -1,17 +1,18 @@
 "use client";
 
-// Applicant follow-up requests and the registrar's replies (portal and student card).
+// Applicant follow-up requests and the registrar's replies (portal and student detail).
 
 import type { ApplicantRequest } from "@/lib/applicant";
 import { REQUEST_STATUS_LABEL, REQUEST_TYPE_LABEL } from "@/lib/applicant";
+import { Pill, type Tone } from "./ui";
 
 const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-const REQ_STYLE: Record<ApplicantRequest["status"], string> = {
-  open: "bg-wait-soft text-wait",
-  answered: "bg-emerald-100 text-emerald-800",
-  closed: "bg-zinc-200 text-zinc-700",
+const REQ_TONE: Record<ApplicantRequest["status"], Tone> = {
+  open: "ink",
+  answered: "go",
+  closed: "muted",
 };
 
 export default function RequestList({
@@ -25,23 +26,23 @@ export default function RequestList({
 }) {
   if (!requests.length) return <p className="text-sm text-muted">No messages yet.</p>;
   return (
-    <ul className="space-y-3" data-testid="request-list">
+    <ul className="divide-y divide-line/70" data-testid="request-list">
       {[...requests].reverse().map((r) => (
-        <li key={r.id} className="rounded-xl border border-line p-3 text-sm" data-testid={`request-${r.status}`}>
+        <li key={r.id} className="py-3 text-sm first:pt-0" data-testid={`request-${r.status}`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">{REQUEST_TYPE_LABEL[r.type]}</span>
-            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REQ_STYLE[r.status]}`}>{REQUEST_STATUS_LABEL[r.status]}</span>
+            <span className="font-semibold">{REQUEST_TYPE_LABEL[r.type]}</span>
+            <Pill tone={REQ_TONE[r.status]}>{REQUEST_STATUS_LABEL[r.status]}</Pill>
           </div>
           <p className="mt-1 whitespace-pre-wrap">{r.message}</p>
-          <p className="mt-1 text-xs text-muted">{r.created_by_name ?? "Applicant"} · {fmtDateTime(r.created_at)}</p>
+          <p className="mt-1 text-xs text-muted">{r.created_by_name ?? "Applicant"}, {fmtDateTime(r.created_at)}</p>
           {r.reply && (
-            <div className="mt-2 rounded-lg bg-brand-soft p-2.5" data-testid="request-reply">
-              <p className="text-xs font-semibold text-brand-dark">Reply from {r.replied_by_name ?? "the registrar"}{r.replied_at ? ` · ${fmtDateTime(r.replied_at)}` : ""}</p>
+            <div className="mt-2 border-l-2 border-go pl-3" data-testid="request-reply">
+              <p className="text-xs font-semibold text-go">Reply from {r.replied_by_name ?? "the registrar"}{r.replied_at ? `, ${fmtDateTime(r.replied_at)}` : ""}</p>
               <p className="mt-0.5 whitespace-pre-wrap">{r.reply}</p>
             </div>
           )}
           {onClose && r.status !== "closed" && (
-            <button type="button" disabled={busy} onClick={() => onClose(r)} className="mt-2 text-xs font-medium text-muted underline hover:text-ink">
+            <button type="button" disabled={busy} onClick={() => onClose(r)} className="mt-2 text-xs font-semibold text-muted underline hover:text-ink">
               Mark as done
             </button>
           )}
@@ -50,4 +51,3 @@ export default function RequestList({
     </ul>
   );
 }
-

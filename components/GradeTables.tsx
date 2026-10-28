@@ -26,7 +26,7 @@ import {
 import { SheetChip, onGridKey, parseCollegeCell, parseScore } from "./grades-ui";
 
 const cellInput =
-  "min-w-0 rounded-md border border-line bg-surface px-1.5 py-1 text-right text-sm tabular-nums focus:border-brand focus:outline-none";
+  "min-w-0 rounded-md border border-line bg-surface px-1.5 py-1 text-right text-sm tabular-nums focus:border-ink focus:outline-none";
 const th = "px-2 py-1.5 text-xs font-medium text-muted whitespace-nowrap";
 
 // ---------- college ----------
@@ -52,12 +52,12 @@ export function CollegeTable({
   onPickPeriod: (p: CollegePeriod) => void;
 }) {
   return (
-    <table className="w-full min-w-[660px] border-separate border-spacing-0 text-sm" data-testid="college-sheet">
-      <thead>
+    <table className="w-full min-w-[720px] border-separate border-spacing-0 text-sm" data-testid="college-sheet">
+      <thead className="sticky top-0 z-20 bg-sheet shadow-[inset_0_-1px_0_var(--color-line)]">
         <tr className="text-left">
-          <th className={`${th} sticky left-0 z-10 bg-surface`}>Student</th>
+          <th className={`${th} sticky left-0 z-30 bg-sheet pl-4 md:pl-6`}>Student</th>
           {COLLEGE_PERIODS.map((p) => (
-            <th key={p} className={`${th} text-center ${p === current ? "bg-brand-soft/60" : ""}`}>
+            <th key={p} className={`${th} text-center ${p === current ? "bg-select" : ""}`}>
               <button type="button" onClick={() => onPickPeriod(p)} className="flex w-full flex-col items-center gap-0.5" data-testid={`period-${p}`}>
                 <span className={p === current ? "text-ink" : ""}>{PERIOD_LABEL[p]}</span>
                 <SheetChip status={statuses[p]} />
@@ -79,16 +79,16 @@ export function CollegeTable({
           const res = collegeResult(periods, settings);
           return (
             <tr key={r.enrollment_id} className="align-top" data-testid={`sheet-row-${r.student_no ?? r.enrollment_id}`}>
-              <td className="sticky left-0 z-10 border-t border-line bg-surface px-2 py-2">
+              <td className="sticky left-0 z-10 border-t border-line bg-sheet py-2 pr-3 pl-4 md:pl-6">
                 <span className="block max-w-[11rem] truncate font-medium">{r.name}</span>
-                <span className="block font-mono text-[11px] text-muted">{r.student_no}</span>
+                <span className="block num text-xs text-muted">{r.student_no}</span>
               </td>
               {COLLEGE_PERIODS.map((p) => {
                 const text = values[p][r.enrollment_id] ?? "";
                 const parsed = parseCollegeCell(text);
                 const g = parsed.ok && parsed.percent != null ? transmuteCollege(parsed.percent, settings.college_scale) : null;
                 return (
-                  <td key={p} className={`border-t border-line px-1.5 py-2 text-center ${p === current ? "bg-brand-soft/30" : ""}`}>
+                  <td key={p} className={`border-t border-line px-1.5 py-2 text-center ${p === current ? "bg-select/50" : ""}`}>
                     {editable[p] ? (
                       <input
                         aria-label={`${PERIOD_LABEL[p]} percent for ${r.name}`}
@@ -106,7 +106,7 @@ export function CollegeTable({
                     ) : (
                       <span className="block tabular-nums">{text || "—"}</span>
                     )}
-                    <span className="mt-0.5 block text-[11px] text-muted tabular-nums">
+                    <span className="mt-0.5 block text-xs text-muted tabular-nums">
                       {parsed.ok && parsed.mark ? parsed.mark : g != null ? fmtGrade(g) : ""}
                     </span>
                   </td>
@@ -130,7 +130,7 @@ export function CollegeTable({
 export function Remarks({ value }: { value: string | null }) {
   if (!value) return <span className="text-muted">—</span>;
   const style =
-    value === "Passed" ? "text-emerald-700" : value === "Failed" || value === "Did Not Meet Expectations" ? "text-danger" : "text-wait";
+    value === "Passed" ? "text-go" : value === "Failed" || value === "Did Not Meet Expectations" ? "text-danger" : "text-warn";
   return <span className={`text-xs font-medium ${style}`}>{value}</span>;
 }
 
@@ -165,9 +165,9 @@ export function K12Table({
   let col = 0;
   return (
     <table className="w-full border-separate border-spacing-0 text-sm" data-testid="k12-sheet">
-      <thead>
+      <thead className="sticky top-0 z-20 bg-sheet shadow-[inset_0_-1px_0_var(--color-line)]">
         <tr>
-          <th rowSpan={2} className={`${th} sticky left-0 z-10 bg-surface text-left align-bottom`}>Learner</th>
+          <th rowSpan={2} className={`${th} sticky left-0 z-30 bg-sheet pl-4 md:pl-6 text-left align-bottom`}>Learner</th>
           {COMPS.map((c) => (
             <th key={c} colSpan={byComp(c).length + 1} className={`${th} border-l border-line text-center`}>
               <span className="text-ink">{COMPONENT_LABEL[c]}</span> ({weights[c]}%)
@@ -175,7 +175,7 @@ export function K12Table({
                 <button
                   type="button"
                   onClick={() => onAddItem(c)}
-                  className="ml-2 rounded border border-line px-1.5 text-[11px] text-brand hover:bg-brand-soft"
+                  className="ml-2 rounded border border-line px-1.5 text-xs text-ink hover:bg-hover"
                   data-testid={`add-item-${c}`}
                   aria-label={`Add ${COMPONENT_LABEL[c]} item`}
                 >
@@ -208,7 +208,7 @@ export function K12Table({
           col = 0;
           return (
             <tr key={r.enrollment_id} data-testid={`k12-row-${row}`}>
-              <td className="sticky left-0 z-10 border-t border-line bg-surface px-2 py-2">
+              <td className="sticky left-0 z-10 border-t border-line bg-sheet py-2 pr-3 pl-4 md:pl-6">
                 <span className="block max-w-[8.5rem] truncate font-medium">{r.name}</span>
               </td>
               {COMPS.map((c) => {
@@ -242,7 +242,7 @@ export function K12Table({
                     {comp.ps != null ? (
                       <>
                         <span className="block">{comp.ps.toFixed(2)}</span>
-                        <span className="block text-[11px] text-muted">{comp.ws.toFixed(2)}</span>
+                        <span className="block text-xs text-muted">{comp.ws.toFixed(2)}</span>
                       </>
                     ) : (
                       "—"
@@ -255,7 +255,7 @@ export function K12Table({
                 {any && !bad ? (
                   <>
                     <span className="font-semibold tabular-nums">{q.quarterly}</span>
-                    <span className={`block text-[11px] ${q.quarterly >= 75 ? "text-muted" : "text-danger"}`}>{descriptor(q.quarterly)}</span>
+                    <span className={`block text-xs ${q.quarterly >= 75 ? "text-muted" : "text-danger"}`}>{descriptor(q.quarterly)}</span>
                   </>
                 ) : (
                   "—"
@@ -288,17 +288,17 @@ function ItemHeaders({
             <div className="flex w-14 flex-col gap-0.5">
               <input
                 aria-label="Item name"
-                className="w-full rounded border border-line px-1 py-0.5 text-[11px] font-normal"
+                className="w-full rounded border border-line px-1 py-0.5 text-xs font-normal"
                 value={it.label}
                 onChange={(e) => onItem(it.id, { label: e.target.value })}
               />
-              <span className="flex items-center gap-0.5 text-[10px] font-normal text-muted">
+              <span className="flex items-center gap-0.5 text-xs font-normal text-muted">
                 /
                 <input
                   aria-label={`Highest possible score of ${it.label}`}
                   data-testid={`max-${it.component}-${k}`}
                   inputMode="numeric"
-                  className="w-9 rounded border border-line px-1 py-0.5 text-right text-[11px]"
+                  className="w-9 rounded border border-line px-1 py-0.5 text-right text-xs"
                   value={String(it.max_score)}
                   onChange={(e) => onItem(it.id, { max_score: Number(e.target.value.replace(/[^\d.]/g, "")) || 0 })}
                 />
@@ -308,7 +308,7 @@ function ItemHeaders({
               </span>
             </div>
           ) : (
-            <span className="block w-10 text-right text-[11px] font-normal text-muted">
+            <span className="block w-10 text-right text-xs font-normal text-muted">
               {it.label}
               <br />/{it.max_score}
             </span>
@@ -317,7 +317,7 @@ function ItemHeaders({
       ))}
       <th className={`${th} text-right align-bottom ${items.length === 0 ? "border-l border-line" : ""}`}>
         PS
-        <span className="block text-[10px] font-normal">WS</span>
+        <span className="block text-xs font-normal">WS</span>
       </th>
     </>
   );
@@ -337,10 +337,10 @@ export function KinderTable({
   onMark: (enrollmentId: string, domain: string, mark: KinderMark | "") => void;
 }) {
   return (
-    <table className="w-full min-w-[640px] border-separate border-spacing-0 text-sm" data-testid="kinder-sheet">
-      <thead>
+    <table className="w-full min-w-[720px] border-separate border-spacing-0 text-sm" data-testid="kinder-sheet">
+      <thead className="sticky top-0 z-20 bg-sheet shadow-[inset_0_-1px_0_var(--color-line)]">
         <tr>
-          <th className={`${th} sticky left-0 z-10 bg-surface text-left`}>Learner</th>
+          <th className={`${th} sticky left-0 z-30 bg-sheet pl-4 md:pl-6 text-left`}>Learner</th>
           {KINDER_DOMAINS.map((d) => (
             <th key={d.code} className={`${th} max-w-[7rem] whitespace-normal text-left`}>{d.name}</th>
           ))}
@@ -349,7 +349,7 @@ export function KinderTable({
       <tbody>
         {roster.map((r) => (
           <tr key={r.enrollment_id}>
-            <td className="sticky left-0 z-10 border-t border-line bg-surface px-2 py-2 font-medium">{r.name}</td>
+            <td className="sticky left-0 z-10 border-t border-line bg-sheet py-2 pr-3 pl-4 md:pl-6 font-medium">{r.name}</td>
             {KINDER_DOMAINS.map((d) => {
               const v = marks[r.enrollment_id]?.[d.code] ?? "";
               return (

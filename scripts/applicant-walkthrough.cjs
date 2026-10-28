@@ -9,6 +9,8 @@
 // assigns the ID -> the applicant is now a student.
 const { chromium } = require("playwright");
 const path = require("node:path");
+const H = require("./ui-helpers.cjs");
+const { expectText } = H;
 
 const BASE = process.env.BASE_URL || "http://localhost:3000";
 const OUT = path.join(__dirname, "..", "screenshots");
@@ -20,11 +22,6 @@ const PNG = Buffer.from(
   "base64",
 );
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
-
-async function expectText(page, testId, text) {
-  await page.getByTestId(testId).filter({ hasText: text }).first().waitFor({ timeout: 10000 });
-  console.log(`  ok: ${testId} shows "${text}"`);
-}
 
 (async () => {
   const browser = await chromium.launch();
@@ -46,10 +43,8 @@ async function expectText(page, testId, text) {
     console.log(`  saved applicant-${name}.png`);
   };
   const quiet = (page) => page.locator('[role="status"]').waitFor({ state: "detached", timeout: 6000 }).catch(() => {});
-  const noOverflow = async (page, where) => {
-    const o = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
-    if (o) throw new Error(`horizontal overflow on the phone: ${where}`);
-  };
+  const noOverflow = (page, where) => H.assertNoOverflow(page, where);
+  const go = (page, m) => H.openModule(page, m);
 
   // ---------- 1. the public form (phone) ----------
   console.log("form");
@@ -57,6 +52,11 @@ async function expectText(page, testId, text) {
   await phone.evaluate(() => localStorage.clear());
   await phone.goto(`${BASE}/apply/SA`);
   await phone.getByTestId("ap-page-1").waitFor();
+  await phone.screenshot({ path: path.join(OUT, "design-apply-phone.png") });
+  await desk.goto(`${BASE}/apply/SA`);
+  await desk.getByTestId("ap-page-1").waitFor();
+  await desk.getByTestId("ap-steps").waitFor();
+  await desk.screenshot({ path: path.join(OUT, "design-apply-desktop.png") });
   // Next with empty fields shows what is missing.
   await phone.getByTestId("ap-next").click();
   await phone.getByText("Please enter the last name.").waitFor();
@@ -133,38 +133,47 @@ async function expectText(page, testId, text) {
   await noOverflow(phone, "portal");
 
   // Update a detail (new mobile number).
-  await phone.getByRole("button", { name: /Update details/ }).click();
+  await go(phone, "details");
   await phone.getByTestId("portal-details").getByTestId("ap-contact").fill("09201112222");
   await phone.getByTestId("portal-details-save").click();
   await phone.getByText("Saved. The registrar can see your changes.").waitFor();
   console.log("  ok: details saved");
 
   // Send a follow-up.
+  await go(phone, "messages");
   await phone.getByTestId("portal-request-type-follow_up").click();
   await phone.getByTestId("portal-request-message").fill("I uploaded my Form 138. My PSA birth certificate will follow tomorrow.");
   await phone.getByTestId("portal-request-send").click();
   await expectText(phone, "request-list", "PSA birth certificate will follow");
   await quiet(phone);
-  await phone.getByTestId("portal-request-form").scrollIntoViewIfNeeded();
-  await shot(phone, "7-portal-follow-up", { fullPage: true });
+  await shot(phone, "7-portal-follow-up");
 
   // ---------- 3. the registrar replies and asks for a fix (desktop) ----------
   console.log("registrar");
   await desk.goto(BASE);
-  await desk.getByTestId("role-switcher").waitFor();
-  await desk.getByTestId("role-switcher").selectOption("registrar");
-  await desk.waitForTimeout(250);
-  await desk.getByTestId("requests-chip").getByRole("button").click();
+  await desk.getByTestId("workspace").waitFor();
+  await H.role(desk, "registrar");
+  await go(desk, "applicants");
+  await desk.getByTestId("filter-requests").click();
   const leaRow = desk.getByTestId("enrollment-list").locator('[data-testid^="row-"]', { hasText: "Santos, Lea" });
   await leaRow.click();
-  await expectText(desk, "card-requests", "will follow tomorrow");
-  await desk.getByRole("button", { name: /History/ }).click();
+  await desk.getByTestId("student-card").first().waitFor();
+  await H.tab(desk, "history");
   await expectText(desk, "history", "Contact number: 09171234567 → 09201112222");
+  await H.tab(desk, "requests");
+  await expectText(desk, "card-requests", "will follow tomorrow");
+  await H.assertNoPageScroll(desk, "Applicants");
+  await desk.screenshot({ path: path.join(OUT, "design-applicants-request.png") });
+  await desk.getByTestId("action-reply").click();
+  await desk.getByTestId("reply-panel").waitFor();
   await desk.getByTestId("reply-text").fill("Thanks, Lea! We got your Form 138. Please upload the PSA here when you have it.");
+  await desk.waitForTimeout(250);
   await shot(desk, "8-registrar-requests");
   await desk.getByTestId("reply-send").click();
+  await desk.getByTestId("reply-panel").waitFor({ state: "detached" });
   await expectText(desk, "card-requests", "We got your Form 138");
   await desk.getByTestId("action-needs_fix").click();
+  await desk.getByTestId("reason-modal").waitFor();
   await desk.getByTestId("reason-text").fill("Your PSA birth certificate is missing. Please upload a clear copy.");
   await desk.getByRole("button", { name: "Confirm needs fix" }).click();
   await expectText(desk, "card-status", "Applied");
@@ -175,7 +184,9 @@ async function expectText(page, testId, text) {
   console.log("applicant fixes");
   await phone.goto(`${BASE}/portal`);
   await expectText(phone, "portal-stage", "Needs a fix: Your PSA birth certificate is missing");
+  await go(phone, "messages");
   await expectText(phone, "request-reply", "We got your Form 138");
+  await go(phone, "papers");
   await phone.getByTestId("portal-upload-psa_birth_cert").setInputFiles({ name: "psa-lea.pdf", mimeType: "application/pdf", buffer: PDF });
   await phone.getByText("PSA birth certificate uploaded.").waitFor();
   await expectText(phone, "portal-papers", "psa-lea.pdf");
@@ -186,6 +197,7 @@ async function expectText(page, testId, text) {
   // ---------- 5. the registrar accepts the papers and assigns the ID (desktop) ----------
   console.log("registrar accepts");
   await desk.goto(BASE);
+  await go(desk, "enrollment");
   await desk.getByTestId("enrollment-list").locator('[data-testid^="row-"]', { hasText: "Santos, Lea" }).click();
   await desk.getByTestId("action-accept_papers").click();
   await expectText(desk, "card-status", "Papers checked");
@@ -199,11 +211,12 @@ async function expectText(page, testId, text) {
   await phone.goto(`${BASE}/portal`);
   await expectText(phone, "portal-stage", "Accepted! Your student number is SA-2026-0005");
   await phone.getByTestId("portal-now-student").waitFor();
-  await phone.getByRole("button", { name: /Update details/ }).click();
+  await shot(phone, "12-portal-now-student");
+  await go(phone, "details");
   await phone.getByTestId("portal-details-locked").waitFor();
   console.log("  ok: details locked after the papers were checked");
-  await shot(phone, "12-portal-now-student", { fullPage: true });
   // Same password, and the student number works as a login too.
+  await phone.getByTestId("tab-account").click();
   await phone.getByTestId("portal-signout").click();
   await phone.getByTestId("portal-login-id").fill("SA-2026-0005");
   await phone.getByTestId("portal-login-password").fill("leasantos2026");
@@ -211,18 +224,28 @@ async function expectText(page, testId, text) {
   await phone.getByTestId("portal-now-student").waitFor();
   console.log("  ok: signed in with the student number");
   await phone.getByTestId("portal-open-main").click();
-  await expectText(phone, "enrollment-list", "Santos, Lea");
+  await expectText(phone, "student-name", "Santos, Lea");
+  await noOverflow(phone, "student app");
+  await shot(phone, "13-student-app");
+  await phone.getByTestId("tab-account").click();
   const role = await phone.getByTestId("role-switcher").inputValue();
   if (role !== "student") throw new Error(`main app role is ${role}, not student`);
   console.log("  ok: main app opens as the student");
-  await shot(phone, "13-student-app");
+
+  // The same student on a desktop: one enrollment, so no list column.
+  await desk.goto(BASE);
+  await expectText(desk, "student-name", "Santos, Lea");
+  await H.quiet(desk);
+  await H.assertNoPageScroll(desk, "student view");
+  await desk.screenshot({ path: path.join(OUT, "design-student.png") });
 
   // ---------- 7. the header's "Applicant" opens the seeded applicant ----------
-  await desk.goto(BASE);
-  await desk.getByTestId("role-switcher").selectOption("applicant");
+  await H.role(desk, "applicant");
   await expectText(desk, "portal-stage", "Needs a fix: Your Form 138 photo is blurry");
+  await H.assertNoPageScroll(desk, "applicant portal");
+  await go(desk, "messages");
   await expectText(desk, "request-reply", "You can change it in Update details");
-  console.log("  ok: header Applicant opens Kevin's portal");
+  console.log("  ok: Applicant in the account menu opens Kevin's portal");
 
   await browser.close();
   if (errors.length) {

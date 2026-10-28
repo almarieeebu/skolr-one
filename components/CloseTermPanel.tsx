@@ -66,25 +66,25 @@ export default function CloseTermPanel({ store, onDone }: { store: DataStore; on
       </p>
 
       {!preview ? (
-        <p className="text-sm text-muted">Checking balances…</p>
+        <p className="text-sm text-muted">Checking balances</p>
       ) : preview.error ? (
         <p className="text-sm text-danger">{preview.error}</p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-xl border border-line">
+          <div className="overflow-x-auto">
             <table className="w-full min-w-[420px] text-sm" data-testid="close-preview">
-              <thead className="bg-paper text-left text-xs text-muted">
+              <thead className="border-b border-line text-left text-xs text-muted">
                 <tr>
                   <th className="px-3 py-2 font-medium">Student</th>
                   <th className="px-3 py-2 text-right font-medium">Balance</th>
                   <th className="px-3 py-2 font-medium">Carried to</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line">
+              <tbody className="divide-y divide-line/70">
                 {preview.items.map((i) => (
                   <tr key={i.enrollment_id}>
                     <td className="px-3 py-2">{i.student_name}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{peso(i.amount)}</td>
+                    <td className="num px-3 py-2 text-right">{peso(i.amount)}</td>
                     <td className="px-3 py-2 text-muted">{i.next_label ?? "Next enrollment (when made)"}</td>
                   </tr>
                 ))}
@@ -96,7 +96,7 @@ export default function CloseTermPanel({ store, onDone }: { store: DataStore; on
                 <tfoot>
                   <tr className="border-t border-line font-semibold">
                     <td className="px-3 py-2">{preview.items.length} accounts</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{peso(preview.total)}</td>
+                    <td className="num px-3 py-2 text-right">{peso(preview.total)}</td>
                     <td />
                   </tr>
                 </tfoot>
@@ -109,8 +109,8 @@ export default function CloseTermPanel({ store, onDone }: { store: DataStore; on
             I checked the list. Close {preview.label}. This cannot be undone.
           </label>
           {error && <p className="text-sm font-medium text-danger" role="alert">{error}</p>}
-          <Button variant="danger" className="w-full" disabled={!sure || busy} onClick={close} data-testid="close-term-confirm">
-            {busy ? "Closing…" : `Close ${preview.label}`}
+          <Button variant="danger" disabled={!sure || busy} onClick={close} data-testid="close-term-confirm">
+            {busy ? "Closing" : `Close ${preview.label}`}
           </Button>
         </>
       )}

@@ -21,11 +21,11 @@ export default function ReportCard({ detail, session, view }: { detail: Enrollme
   return (
     <section className="mx-auto max-w-[780px] bg-white p-8 text-[12px] text-black" data-testid="report-card" aria-label="Report card">
       <header className="border-b-2 border-black pb-3 text-center">
-        {!isCollege && <p className="text-[11px]">Republic of the Philippines · Department of Education</p>}
+        {!isCollege && <p className="text-xs">Republic of the Philippines, Department of Education</p>}
         <p className="text-lg font-bold">{school.name}</p>
-        <p className="mt-1 text-base font-semibold tracking-wide uppercase">
+        <p className="mt-1 text-base font-semibold">
           {isCollege ? "Grade slip" : "Learner's progress report card"}
-          {!isCollege && <span className="ml-2 text-[11px] font-normal normal-case">(SF9)</span>}
+          {!isCollege && <span className="ml-2 text-xs font-normal normal-case">(SF9)</span>}
         </p>
         <p className="text-zinc-600">{isCollege ? termLabel(term) : `School year ${term.school_year}`}</p>
       </header>
@@ -33,7 +33,7 @@ export default function ReportCard({ detail, session, view }: { detail: Enrollme
       <dl className="mt-3 grid grid-cols-2 gap-x-8 gap-y-0.5">
         <div className="flex gap-2"><dt className="w-24 text-zinc-600">Name</dt><dd className="font-semibold">{fullName(s)}</dd></div>
         <div className="flex gap-2"><dt className="w-24 text-zinc-600">{isCollege ? "Student ID" : "LRN"}</dt><dd>{isCollege ? s.student_no ?? "—" : s.lrn ?? "—"}</dd></div>
-        <div className="flex gap-2"><dt className="w-24 text-zinc-600">{isCollege ? "Program" : "Grade"}</dt><dd>{isCollege ? `${e.course ?? ""} · ${e.level}` : `${e.level}${e.strand ? ` · ${e.strand}` : ""}`}</dd></div>
+        <div className="flex gap-2"><dt className="w-24 text-zinc-600">{isCollege ? "Program" : "Grade"}</dt><dd>{isCollege ? `${e.course ?? ""} ${e.level}` : `${e.level}${e.strand ? ` ${e.strand}` : ""}`}</dd></div>
         {section && <div className="flex gap-2"><dt className="w-24 text-zinc-600">Section</dt><dd>{section.title}</dd></div>}
         <div className="flex gap-2"><dt className="w-24 text-zinc-600">Sex</dt><dd>{s.sex ?? "—"}</dd></div>
         <div className="flex gap-2"><dt className="w-24 text-zinc-600">Date</dt><dd>{today}</dd></div>
@@ -70,7 +70,7 @@ export default function ReportCard({ detail, session, view }: { detail: Enrollme
           <p className="mt-2 text-right text-sm font-semibold" data-testid="report-gwa">
             General weighted average: {view.report.gwa != null ? view.report.gwa.toFixed(2) : "—"} ({view.report.gwaUnits} units)
           </p>
-          <p className="mt-1 text-[11px] text-zinc-600">
+          <p className="mt-1 text-xs text-zinc-600">
             Grading: 1.00 (highest) to 3.00 (passing); 5.00 failed. INC incomplete, DRP dropped, W withdrawn. Units in ( ) are non-credit and not in the GWA.
           </p>
         </>
@@ -109,7 +109,7 @@ export default function ReportCard({ detail, session, view }: { detail: Enrollme
               </tr>
             </tbody>
           </table>
-          <table className="mt-4 w-auto border-collapse text-[11px]">
+          <table className="mt-4 w-auto border-collapse text-xs">
             <thead>
               <tr className="bg-zinc-100"><th className={cell}>Descriptors</th><th className={cell}>Grading scale</th><th className={cell}>Remarks</th></tr>
             </thead>
@@ -151,7 +151,7 @@ export default function ReportCard({ detail, session, view }: { detail: Enrollme
         <div><div className="border-t border-black pt-1">{isCollege ? "Registrar" : "Adviser"}</div></div>
         <div><div className="border-t border-black pt-1">{isCollege ? "Student" : "Parent / Guardian"}</div></div>
       </div>
-      <p className="mt-6 text-[10px] text-zinc-500">Only grades posted by the registrar appear on this report.</p>
+      <p className="mt-6 text-xs text-zinc-500">Only grades posted by the registrar appear on this report.</p>
     </section>
   );
 }

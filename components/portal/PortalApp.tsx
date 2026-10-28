@@ -29,16 +29,15 @@ import {
 import { DemoStore } from "@/lib/data/demo-store";
 import { SupabaseStore } from "@/lib/data/supabase-store";
 import { fullName, termLabel } from "@/lib/data/store";
-import { Button, Section } from "../ui";
+import { Button, EmptyState, Note, Pill, SidePanel, StatusBadge, Toast, type Tone } from "../ui";
 import PublicShell from "../apply/PublicShell";
+import Shell, { DetailPane, type ModuleTab } from "../shell/Shell";
 import { Labeled, PersonalFields, ProgramFields, bigInput } from "../apply/FormFields";
 import { ProgressBar, UploadButton } from "../StudentCard";
 import RequestList from "../RequestList";
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
-const fmtDateTime = (iso: string) =>
-  new Date(iso).toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 export default function PortalApp({ demo }: { demo: boolean }) {
   const [store, setStore] = useState<DataStore | null>(null);
@@ -83,32 +82,28 @@ export default function PortalApp({ demo }: { demo: boolean }) {
     setData(null);
   };
 
-  let body: React.ReactNode;
-  if (!store || data === undefined) body = <p className="py-16 text-center text-sm text-muted">Loading…</p>;
-  else if (data === null) body = <Login store={store} demo={demo} onDone={load} error={error} />;
-  else if (data.must_change_password) body = <NewPassword store={store} first onDone={() => done("Password saved. Welcome!")} />;
-  else body = <Home data={data} store={store} demo={demo} onChanged={done} onSignOut={signOut} />;
+  const toastEl = toast && <Toast message={toast} />;
 
+  if (!store || data === undefined) {
+    return <div className="grid h-dvh place-items-center text-sm text-muted">Loading</div>;
+  }
+  if (data === null || data.must_change_password) {
+    return (
+      <PublicShell school={school} subtitle="Applicant Portal" demo={demo} narrow>
+        {data === null ? (
+          <Login store={store} demo={demo} onDone={load} error={error} />
+        ) : (
+          <NewPassword store={store} first onDone={() => done("Password saved. Welcome!")} />
+        )}
+        {toastEl}
+      </PublicShell>
+    );
+  }
   return (
-    <PublicShell
-      school={school}
-      subtitle="Applicant Portal"
-      demo={demo}
-      right={
-        data ? (
-          <Button variant="ghost" className="min-h-9 px-2 text-xs" onClick={signOut} data-testid="portal-signout">
-            Sign out
-          </Button>
-        ) : undefined
-      }
-    >
-      {body}
-      {toast && (
-        <div role="status" className="fixed bottom-4 left-1/2 z-50 max-w-[90vw] -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-center text-sm text-white shadow-lg">
-          {toast}
-        </div>
-      )}
-    </PublicShell>
+    <>
+      <Home data={data} store={store} demo={demo} onChanged={done} onSignOut={signOut} />
+      {toastEl}
+    </>
   );
 }
 
@@ -122,7 +117,7 @@ function Login({ store, demo, onDone, error }: { store: DataStore; demo: boolean
   return (
     <div className="space-y-4">
       <form
-        className="space-y-4 rounded-2xl border border-line bg-surface p-5"
+        className="space-y-4 rounded-xl border border-line bg-sheet p-6"
         data-testid="portal-login"
         onSubmit={async (e) => {
           e.preventDefault();
@@ -139,8 +134,8 @@ function Login({ store, demo, onDone, error }: { store: DataStore; demo: boolean
         }}
       >
         <div>
-          <h1 className="text-xl font-semibold">Sign in</h1>
-          <p className="text-sm text-muted">Use the applicant number and password you got after sending the form.</p>
+          <h1 className="text-xl font-semibold">Sign in to the Applicant Portal</h1>
+          <p className="mt-1 text-sm text-muted">Use the applicant number and password you got after sending the form.</p>
         </div>
         <Labeled label="Applicant number or email">
           <input data-testid="portal-login-id" autoCapitalize="characters" autoComplete="username" placeholder="APP-2026-00012" className={bigInput} value={login} onChange={(e) => setLogin(e.target.value)} required />
@@ -148,19 +143,19 @@ function Login({ store, demo, onDone, error }: { store: DataStore; demo: boolean
         <Labeled label="Password">
           <input data-testid="portal-login-password" type="password" autoComplete="current-password" className={bigInput} value={password} onChange={(e) => setPassword(e.target.value)} required />
         </Labeled>
-        {msg && <p className="text-sm font-medium text-danger" role="alert">{msg}</p>}
+        {msg && <p className="text-sm font-medium text-stop" role="alert">{msg}</p>}
         <Button type="submit" disabled={busy} className="min-h-11 w-full" data-testid="portal-login-submit">
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? "Signing in" : "Sign in"}
         </Button>
         <p className="text-xs text-muted">Students can also sign in here with their student number.</p>
       </form>
       <p className="text-center text-sm text-muted">
-        No account yet? <Link href="/apply" className="font-medium text-brand underline">Fill in the enrollment form</Link>
+        No account yet? <Link href="/apply" className="font-semibold text-ink underline">Fill in the enrollment form</Link>
       </p>
       {demo && (
-        <p className="rounded-xl bg-wait-soft p-3 text-xs text-wait">
-          Demo logins: <span className="font-mono">APP-2026-00001</span> / <span className="font-mono">mango-river-sunny-27</span> (first sign-in),
-          or <span className="font-mono">APP-2026-00002</span> / <span className="font-mono">password123</span> (needs a fix).
+        <p className="rounded-md border border-line bg-sheet p-3 text-xs text-muted">
+          Demo logins: <span className="num font-medium text-ink">APP-2026-00001</span> with <span className="num font-medium text-ink">mango-river-sunny-27</span> (first sign-in),
+          or <span className="num font-medium text-ink">APP-2026-00002</span> with <span className="num font-medium text-ink">password123</span> (needs a fix).
         </p>
       )}
     </div>
@@ -174,7 +169,7 @@ function NewPassword({ store, first, onDone }: { store: DataStore; first?: boole
   const [busy, setBusy] = useState(false);
   return (
     <form
-      className={first ? "space-y-4 rounded-2xl border border-line bg-surface p-5" : "space-y-3"}
+      className={first ? "space-y-4 rounded-xl border border-line bg-sheet p-6" : "space-y-4"}
       data-testid="portal-new-password"
       onSubmit={async (e) => {
         e.preventDefault();
@@ -194,11 +189,13 @@ function NewPassword({ store, first, onDone }: { store: DataStore; first?: boole
         }
       }}
     >
-      {first && (
+      {first ? (
         <div>
           <h1 className="text-xl font-semibold">Pick your own password</h1>
-          <p className="text-sm text-muted">Your password was temporary. Choose a new one you will remember (at least 8 characters, with a number).</p>
+          <p className="mt-1 text-sm text-muted">Your password was temporary. Choose a new one you will remember (at least 8 characters, with a number).</p>
         </div>
+      ) : (
+        <p className="text-sm text-muted">At least 8 characters, with a number.</p>
       )}
       <Labeled label="New password">
         <input data-testid="portal-new-pw" type="password" autoComplete="new-password" className={bigInput} value={next} onChange={(e) => setNext(e.target.value)} />
@@ -207,26 +204,28 @@ function NewPassword({ store, first, onDone }: { store: DataStore; first?: boole
         <input data-testid="portal-new-pw2" type="password" autoComplete="new-password" className={bigInput} value={confirm} onChange={(e) => setConfirm(e.target.value)} />
       </Labeled>
       {problems.length > 0 && (
-        <ul className="space-y-0.5 text-sm font-medium text-danger" role="alert">
+        <ul className="space-y-0.5 text-sm font-medium text-stop" role="alert">
           {problems.map((p) => <li key={p}>{p}</li>)}
         </ul>
       )}
       <Button type="submit" disabled={busy} className="min-h-11 w-full" data-testid="portal-new-pw-save">
-        {busy ? "Saving…" : "Save new password"}
+        {busy ? "Saving" : "Save new password"}
       </Button>
     </form>
   );
 }
 
-// ---------- home ----------
+// ---------- home: the same shell as the staff app, with portal tabs ----------
 
-const TONE: Record<string, string> = {
-  wait: "border-sky-200 bg-sky-50 text-sky-900",
-  fix: "border-wait/40 bg-wait-soft text-wait",
-  good: "border-brand/30 bg-brand-soft text-brand-dark",
-  done: "border-emerald-300 bg-emerald-50 text-emerald-900",
-  stop: "border-danger/30 bg-danger-soft text-danger",
+const TONE: Record<string, Tone> = {
+  wait: "ink",
+  fix: "warn",
+  good: "go",
+  done: "go",
+  stop: "stop",
 };
+
+type PortalTab = "progress" | "details" | "papers" | "messages";
 
 function Home({
   data,
@@ -241,109 +240,152 @@ function Home({
   onChanged: (msg: string) => Promise<void>;
   onSignOut: () => void;
 }) {
+  const [tab, setTab] = useState<PortalTab>("progress");
+  const [pwOpen, setPwOpen] = useState(false);
   const d = data.detail;
   const role = data.session.actor.role;
+  const school = data.session.school;
+
+  const menu = (close: () => void) => (
+    <div className="space-y-2">
+      <p className="text-xs text-muted">
+        Signed in as <span className="num font-medium text-ink">{data.applicant_no ?? data.session.email}</span>
+        {data.applicant_no && !data.session.email.endsWith(".local") && <> or {data.session.email}</>}
+      </p>
+      <Button variant="secondary" size="sm" className="w-full" onClick={() => { close(); setPwOpen(true); }} data-testid="portal-change-password">
+        Change password
+      </Button>
+      <Button variant="ghost" size="sm" className="w-full" onClick={() => { close(); onSignOut(); }} data-testid="portal-signout">
+        Sign out
+      </Button>
+    </div>
+  );
+
   if (!d) {
     return (
-      <div className="space-y-3 rounded-2xl border border-line bg-surface p-5 text-sm" data-testid="portal-empty">
-        <p className="text-base font-semibold">Hi, {data.session.actor.name}!</p>
-        <p className="text-muted">
-          {role === "applicant" || role === "student"
-            ? "We could not find an application for this account."
-            : "This portal is for applicants. Staff, students and parents use the main app."}
-        </p>
-        <Link href="/" className="font-medium text-brand underline">Open the main app</Link>
-      </div>
+      <Shell school={school} modules={[]} active="" onModule={() => {}} user={{ name: data.session.actor.name, role }} menu={menu} showDetailOnPhone testId="portal"
+        detail={
+          <EmptyState title={`Hi, ${data.session.actor.name}`} action={<Link href="/" className="font-semibold text-ink underline">Open the main app</Link>}>
+            <span data-testid="portal-empty">
+              {role === "applicant" || role === "student"
+                ? "We could not find an application for this account."
+                : "This portal is for applicants. Staff, students and parents use the main app."}
+            </span>
+          </EmptyState>
+        }
+      />
     );
   }
+
   const e = d.enrollment;
   const s = d.student;
   const lastReason = [...d.history].reverse().find((h) => h.to_status === e.status)?.reason ?? null;
   const stage = applicantStage(e, s, lastReason);
   const dates = stepDates(d.history);
   const isStudent = role === "student";
-  const edit = canEditApplication(e.status);
+  const replies = (d.requests ?? []).filter((r) => r.status === "answered").length;
+  const needsFix = e.status === "applied" && !!e.fix_note;
+
+  const modules: ModuleTab[] = [
+    { id: "progress", label: "Progress", icon: "progress" },
+    { id: "details", label: "Details", icon: "details" },
+    { id: "papers", label: "Papers", icon: "papers", waiting: needsFix ? 1 : 0 },
+    { id: "messages", label: "Messages", icon: "messages", waiting: replies },
+  ];
+
+  const header = (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h1 className="text-xl font-semibold">Hi, {s.first_name}!</h1>
+        <StatusBadge status={e.status} needsFix={needsFix} />
+      </div>
+      <p className="flex flex-wrap gap-x-4 text-sm text-muted">
+        {data.applicant_no && <span className="num font-medium text-ink" data-testid="portal-applicant-no">{data.applicant_no}</span>}
+        <span>{e.track === "college" ? `${e.course ?? ""} ${e.level}` : `${e.level}${e.strand ? ` ${e.strand}` : ""}`}</span>
+        <span>{termLabel(d.term)}</span>
+      </p>
+      <ProgressBar status={e.status} />
+    </div>
+  );
+
+  const title: Record<PortalTab, string> = {
+    progress: "Your progress",
+    details: "Update details",
+    papers: "Papers",
+    messages: "Messages to the registrar",
+  };
+
+  const body = (
+    <div className="max-w-3xl space-y-5">
+      <h2 className="text-base font-semibold">{title[tab]}</h2>
+      {tab === "progress" && (
+        <>
+          <Note tone={TONE[stage.tone]} testId="portal-stage">
+            <p className="font-semibold">{stage.title}</p>
+            {stage.body && <p className="mt-1 text-ink">{stage.body}</p>}
+            <p className="mt-2 text-ink"><span className="font-semibold">What to do next:</span> {stage.next}</p>
+          </Note>
+          {isStudent && (
+            <div className="flex flex-col gap-3 border-y border-line py-4 sm:flex-row sm:items-center sm:justify-between" data-testid="portal-now-student">
+              <div>
+                <p className="font-semibold text-go">You are now a student</p>
+                <p className="mt-0.5 text-sm text-muted">
+                  Student number <span className="num font-semibold text-ink">{s.student_no}</span>. Use the same password; you can sign in with your student number too.
+                </p>
+              </div>
+              <a
+                href="/"
+                data-testid="portal-open-main"
+                onClick={() => {
+                  if (demo) DemoStore.openMainAppAs(data.session.actor.user_id);
+                }}
+                className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-on-primary"
+              >
+                Open the student app
+              </a>
+            </div>
+          )}
+          <ol className="divide-y divide-line/70" data-testid="portal-progress">
+            {STEPS.map((st, i) => {
+              const reached = dates[st.status];
+              const here = stepIndex(e.status) === i && e.status !== "officially_enrolled";
+              return (
+                <li key={st.status} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                  <span className={`flex items-center gap-3 ${here ? "font-semibold" : reached ? "" : "text-muted"}`}>
+                    <span className={`num grid h-6 w-6 place-items-center rounded-full text-xs font-semibold ${reached && !here ? "bg-go text-white" : here ? "bg-ink text-sheet" : "border border-line"}`}>{i + 1}</span>
+                    {st.label}
+                    {here && <Pill tone="ink">Now</Pill>}
+                  </span>
+                  <span className="num shrink-0 text-xs text-muted">{reached ? fmtDate(reached) : "Not yet"}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
+      {tab === "details" && <DetailsForm detail={d} store={store} onChanged={onChanged} />}
+      {tab === "papers" && <Papers detail={d} store={store} role={role} onChanged={onChanged} />}
+      {tab === "messages" && <Requests detail={d} store={store} onChanged={onChanged} />}
+    </div>
+  );
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-2xl border border-line bg-surface p-4">
-        <p className="text-lg font-semibold">Hi, {s.first_name}!</p>
-        <p className="text-sm text-muted">
-          {data.applicant_no && <span className="font-mono" data-testid="portal-applicant-no">{data.applicant_no}</span>}
-          {data.applicant_no && " · "}
-          {e.track === "college" ? `${e.course ?? ""} ${e.level}` : `${e.level}${e.strand ? ` ${e.strand}` : ""}`} · {termLabel(d.term)}
-        </p>
-        <div className={`mt-3 rounded-xl border p-3 ${TONE[stage.tone]}`} data-testid="portal-stage">
-          <p className="font-semibold">{stage.title}</p>
-          {stage.body && <p className="mt-1 text-sm">{stage.body}</p>}
-          <p className="mt-2 text-sm"><strong>What to do next:</strong> {stage.next}</p>
-        </div>
-        {isStudent && (
-          <div className="mt-3 rounded-xl bg-emerald-600 p-4 text-white" data-testid="portal-now-student">
-            <p className="font-semibold">🎓 You are now a student</p>
-            <p className="mt-1 text-sm text-white/90">
-              Student number <span className="font-mono font-semibold">{s.student_no}</span>. Use the same password; you can sign in with your student number too.
-            </p>
-            <a
-              href="/"
-              data-testid="portal-open-main"
-              onClick={() => {
-                if (demo) DemoStore.openMainAppAs(data.session.actor.user_id);
-              }}
-              className="mt-3 flex min-h-11 items-center justify-center rounded-lg bg-white px-4 text-sm font-semibold text-emerald-800"
-            >
-              Open the student app →
-            </a>
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-2xl border border-line bg-surface p-4" data-testid="portal-progress">
-        <h2 className="mb-3 text-sm font-semibold">Your progress</h2>
-        <ProgressBar status={e.status} />
-        <ol className="mt-4 space-y-2">
-          {STEPS.map((st, i) => {
-            const reached = dates[st.status];
-            const here = stepIndex(e.status) === i && e.status !== "officially_enrolled";
-            return (
-              <li key={st.status} className="flex items-center justify-between gap-3 text-sm">
-                <span className={here ? "font-semibold" : reached ? "" : "text-muted"}>
-                  {i + 1}. {st.label}
-                  {here && <span className="ml-2 rounded-full bg-wait-soft px-2 py-px text-[11px] font-medium text-wait">now</span>}
-                </span>
-                <span className="shrink-0 text-xs text-muted">{reached ? fmtDate(reached) : "—"}</span>
-              </li>
-            );
-          })}
-        </ol>
-      </section>
-
-      <div className="overflow-hidden rounded-2xl border border-line bg-surface">
-        <Section title="Update details" aside={edit.ok ? "You can still edit" : "Locked"} defaultOpen={false}>
-          <DetailsForm detail={d} store={store} onChanged={onChanged} />
-        </Section>
-        <Section title="Papers" aside={`${d.documents.filter((x) => x.file_name).length} uploaded`} defaultOpen={!!e.fix_note}>
-          <Papers detail={d} store={store} role={role} onChanged={onChanged} />
-        </Section>
-        <Section
-          title="Messages to the registrar"
-          aside={(d.requests ?? []).some((r) => r.status === "answered") ? "New reply" : `${(d.requests ?? []).length} sent`}
-          defaultOpen
-        >
-          <Requests detail={d} store={store} onChanged={onChanged} />
-        </Section>
-        <Section title="Account" defaultOpen={false}>
-          <div className="space-y-4">
-            <p className="text-sm text-muted">
-              Signed in as <span className="font-medium text-ink">{data.applicant_no ?? data.session.email}</span>
-              {data.applicant_no && !data.session.email.endsWith(".local") && <> or {data.session.email}</>}.
-            </p>
-            <NewPassword store={store} onDone={() => void onChanged("Password changed.")} />
-            <Button variant="secondary" className="min-h-11 w-full" onClick={onSignOut}>Sign out</Button>
-          </div>
-        </Section>
-      </div>
-    </div>
+    <>
+      <Shell
+        school={school}
+        modules={modules}
+        active={tab}
+        onModule={(m) => setTab(m as PortalTab)}
+        user={{ name: data.session.actor.name, role }}
+        menu={menu}
+        showDetailOnPhone
+        testId="portal"
+        detail={<DetailPane header={header} testId={`portal-${tab}`}>{body}</DetailPane>}
+      />
+      <SidePanel title="Change password" open={pwOpen} onClose={() => setPwOpen(false)} testId="portal-password-panel">
+        <NewPassword store={store} onDone={() => { setPwOpen(false); void onChanged("Password changed."); }} />
+      </SidePanel>
+    </>
   );
 }
 
@@ -371,14 +413,14 @@ function DetailsForm({ detail, store, onChanged }: { detail: EnrollmentDetail; s
   if (!edit.ok) {
     return (
       <div className="space-y-3 text-sm" data-testid="portal-details-locked">
-        <p className="rounded-lg bg-paper p-3">🔒 {edit.reason}</p>
-        <dl className="divide-y divide-line">
+        <Note>{edit.reason}</Note>
+        <dl className="divide-y divide-line/70">
           {[
             ["Name", fullName(detail.student)],
             ["Contact number", detail.student.contact_no ?? "—"],
             ["Address", detail.student.address ?? "—"],
-            ["Guardian", `${detail.student.guardian_name ?? "—"} · ${detail.student.guardian_contact ?? ""}`],
-            [detail.enrollment.track === "college" ? "Course" : "Grade level", detail.enrollment.track === "college" ? `${detail.enrollment.course} · ${detail.enrollment.level}` : detail.enrollment.level],
+            ["Guardian", `${detail.student.guardian_name ?? "None"} ${detail.student.guardian_contact ?? ""}`.trim()],
+            [detail.enrollment.track === "college" ? "Course" : "Grade level", detail.enrollment.track === "college" ? `${detail.enrollment.course} ${detail.enrollment.level}` : detail.enrollment.level],
           ].map(([k, v]) => (
             <div key={k} className="flex justify-between gap-4 py-1.5">
               <dt className="text-muted">{k}</dt>
@@ -421,12 +463,12 @@ function DetailsForm({ detail, store, onChanged }: { detail: EnrollmentDetail; s
       <p className="text-sm text-muted">You can change these until the registrar checks your papers. Every change is saved in your history.</p>
       <PersonalFields f={f} set={set} errors={errors} />
       <div className="border-t border-line pt-4">
-        <p className="mb-3 text-sm font-semibold">{detail.enrollment.track === "college" ? "College" : "K to 12"} · {termLabel(detail.term)}</p>
+        <p className="mb-3 text-sm font-semibold">{detail.enrollment.track === "college" ? "College" : "K to 12"}, {termLabel(detail.term)}</p>
         <ProgramFields f={f} set={set} errors={errors} terms={[detail.term]} locked />
       </div>
       {msg && <p className="text-sm font-medium text-danger" role="alert">{msg}</p>}
       <Button type="submit" disabled={busy} className="min-h-11 w-full" data-testid="portal-details-save">
-        {busy ? "Saving…" : "Save changes"}
+        {busy ? "Saving" : "Save changes"}
       </Button>
     </form>
   );
@@ -449,29 +491,21 @@ function Papers({
   const [err, setErr] = useState<string | null>(null);
   return (
     <div className="space-y-2">
-      {!canUpload && <p className="rounded-lg bg-paper p-3 text-sm">🔒 Papers are locked after the registrar checks them.</p>}
-      {e.fix_note && <p className="rounded-lg bg-wait-soft p-3 text-sm text-wait">Registrar&apos;s note: {e.fix_note}</p>}
-      <ul className="divide-y divide-line" data-testid="portal-papers">
+      {!canUpload && <Note>Papers are locked after the registrar checks them.</Note>}
+      {e.fix_note && e.status === "applied" && <Note tone="warn">Registrar&apos;s note: {e.fix_note}</Note>}
+      <ul className="divide-y divide-line/70" data-testid="portal-papers">
         {types.map((t) => {
           const doc = detail.documents.find((d) => d.type === t);
           return (
             <li key={t} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
               <span className="min-w-0">
-                {DOC_LABEL[t]}
+                <span className="font-medium">{DOC_LABEL[t]}</span>
                 <span className="block truncate text-xs text-muted">
-                  {doc?.file_name ? `${doc.file_name}${doc.uploaded_at ? ` · ${fmtDate(doc.uploaded_at)}` : ""}` : "Not uploaded yet"}
+                  {doc?.file_name ? `${doc.file_name}${doc.uploaded_at ? `, ${fmtDate(doc.uploaded_at)}` : ""}` : "Not uploaded yet"}
                 </span>
               </span>
               <span className="flex items-center gap-2">
-                {doc?.file_name ? (
-                  doc.checked ? (
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">Checked ✓</span>
-                  ) : (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">Uploaded</span>
-                  )
-                ) : (
-                  <span className="rounded-full bg-wait-soft px-2 py-0.5 text-xs text-wait">Missing</span>
-                )}
+                {doc?.file_name ? (doc.checked ? <Pill tone="go">Checked</Pill> : <Pill tone="ink">Uploaded</Pill>) : <Pill tone="warn">Missing</Pill>}
                 {canUpload && (
                   <UploadButton
                     testId={`portal-upload-${t}`}
@@ -504,7 +538,7 @@ function Requests({ detail, store, onChanged }: { detail: EnrollmentDetail; stor
   const [err, setErr] = useState<string | null>(null);
   const closed = detail.enrollment.status === "rejected" || detail.enrollment.status === "withdrawn";
   return (
-    <div className="space-y-4">
+    <div className="grid gap-6 lg:grid-cols-2">
       {!closed && (
         <form
           className="space-y-3"
@@ -524,7 +558,7 @@ function Requests({ detail, store, onChanged }: { detail: EnrollmentDetail; stor
             }
           }}
         >
-          <div className="grid grid-cols-3 gap-1 rounded-xl bg-paper p-1" role="radiogroup" aria-label="Type">
+          <div className="grid grid-cols-3 gap-1 rounded-md border border-line bg-paper p-1" role="radiogroup" aria-label="Type">
             {(Object.keys(REQUEST_TYPE_LABEL) as RequestType[]).map((t) => (
               <button
                 key={t}
@@ -533,7 +567,7 @@ function Requests({ detail, store, onChanged }: { detail: EnrollmentDetail; stor
                 aria-checked={type === t}
                 data-testid={`portal-request-type-${t}`}
                 onClick={() => setType(t)}
-                className={`min-h-10 rounded-lg px-1 text-xs font-semibold sm:text-sm ${type === t ? "bg-surface text-ink shadow-sm" : "text-muted"}`}
+                className={`min-h-9 rounded-md px-1 text-xs font-semibold sm:text-sm ${type === t ? "bg-sheet text-ink shadow-[0_0_0_1px_var(--color-line)]" : "text-muted hover:text-ink"}`}
               >
                 {REQUEST_TYPE_LABEL[t]}
               </button>
@@ -544,13 +578,13 @@ function Requests({ detail, store, onChanged }: { detail: EnrollmentDetail; stor
             rows={3}
             maxLength={1000}
             className={bigInput}
-            placeholder={type === "follow_up" ? "e.g. I uploaded my Form 138." : type === "change_request" ? "e.g. Can I change my course to BSIT?" : "Type your question…"}
+            placeholder={type === "follow_up" ? "e.g. I uploaded my Form 138." : type === "change_request" ? "e.g. Can I change my course to BSIT?" : "Type your question"}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
           />
           {err && <p className="text-sm font-medium text-danger" role="alert">{err}</p>}
           <Button type="submit" disabled={busy || !message.trim()} className="min-h-11 w-full" data-testid="portal-request-send">
-            {busy ? "Sending…" : "Send to the registrar"}
+            {busy ? "Sending" : "Send to the registrar"}
           </Button>
         </form>
       )}

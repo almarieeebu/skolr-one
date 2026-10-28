@@ -42,7 +42,7 @@ and Applicant (a temporary account from the online form; see *Applicant Portal*)
 All fee work happens on the same page. Rules live in `lib/fees/` (pure TypeScript, with tests).
 Money is in pesos (₱); the rules count in centavos so totals always match.
 
-**Fee setup** (Registrar → *Fee setup* button in the header, side panel)
+**Fee setup** (Registrar → *Setup* in the left rail → *Fee setup*)
 - One setup per term and track. You can add a more specific one per course and/or year level
   (college) or per grade level (K to 12). The most specific match wins.
 - College: rate per unit, a higher rate for **major** subjects (tick "Major" per subject),
@@ -78,7 +78,7 @@ Money is in pesos (₱); the rules count in centavos so totals always match.
 **Statement of account**: *Print statement of account* in the Fees section prints a clean page
 (school name, student, items, payments, schedule, balance). The rest of the page is hidden when printing.
 
-**Close term** (Registrar → *Close term* button in the header)
+**Close term** (Registrar → *Setup* in the left rail → *Close term*)
 - For each enrollment of the term with a balance, the balance is moved to the student's next-term
   enrollment as **Previous balance**. If the student has no next-term enrollment yet, it is added when one is made.
 - The closed term takes no more payments, discounts or load changes.
@@ -113,7 +113,7 @@ Teachers type grades in the same page. Rules live in `lib/grades/` (pure TypeScr
   Enter moves down and Shift+Enter moves up, like a spreadsheet. **Save draft**, then **Submit grades**.
 - **Registrar:** the **Grades** tab shows all classes. The **Grades to approve** filter shows only
   submitted sheets. Open one and **Approve and post** it, or **Return to teacher** with a note.
-- **Grade settings** (header button, registrar): college average rule, period weights, grade scale,
+- **Grade settings** (registrar, *Setup* → *Grade settings*): college average rule, period weights, grade scale,
   K to 12 weights per subject group, and deadlines.
 - **Student card → Grades:** the grades of that student, with GWA or general average, and
   **Print grade slip / Print report card** (SF9 style). Students and parents see posted grades only.
@@ -252,7 +252,7 @@ npm run dev
 Open http://localhost:3000. With no Supabase keys the app runs in **demo mode**:
 
 - Data lives in your browser, filled with "Sample Academy" sample data.
-- Use the **Viewing as** dropdown in the header to switch between Registrar, Cashier, Student, Parent and Teacher.
+- The app is one page: modules in the left rail, a list, then the details (see `docs/design.md`). Open the account menu at the bottom of the rail (the *Account* tab on phones) to switch between Registrar, Cashier, Student, Parent, Teacher and Applicant, reset the demo, or sign out.
 - **Reset demo** puts the sample data back.
 
 Try this: as Registrar, open *Dela Cruz, Juan* → Accept papers → Assign student ID.

@@ -77,7 +77,7 @@ export default function GradesSection({
     };
   }, [store, detail.enrollment.id, detail.enrollment.updated_at]);
 
-  if (!grades) return <p className="text-sm text-muted">Loading grades…</p>;
+  if (!grades) return <p className="text-sm text-muted">Loading grades</p>;
   const view = buildGradeView(detail, grades, perms.postedOnly);
   // The printed report card always shows posted grades only.
   const printView = buildGradeView(detail, grades, true);
@@ -89,7 +89,7 @@ export default function GradesSection({
   };
 
   return (
-    <div className="space-y-3" data-testid="grades-section">
+    <div className="max-w-4xl space-y-3" data-testid="grades-section">
       {perms.postedOnly && <p className="text-xs text-muted">Only grades posted by the registrar are shown.</p>}
       {session.actor.role === "teacher" && <p className="text-xs text-muted">Showing grades from your own classes.</p>}
 
@@ -119,14 +119,14 @@ function CollegeGrades({ report, decimals }: { report: CollegeReport; decimals: 
         {report.rows.map((r) => (
           <li key={r.offering.id} className="flex items-start justify-between gap-3 py-2">
             <span className="min-w-0">
-              <span className="font-mono text-xs">{r.offering.code}</span>
+              <span className="num text-xs">{r.offering.code}</span>
               <span className="ml-1 text-xs text-muted">{r.offering.units}{r.offering.non_credit ? "*" : ""} units</span>
               <span className="block truncate text-sm">{r.offering.title}</span>
-              <span className="block text-[11px] text-muted tabular-nums">
+              <span className="block text-xs text-muted tabular-nums">
                 {COLLEGE_PERIODS.map((p) => {
                   const c = r.periods[p];
                   return `${PERIOD_LABEL[p].slice(0, 4)} ${c.mark ?? (c.grade != null ? fmtGrade(c.grade) : "—")}`;
-                }).join(" · ")}
+                }).join("   ")}
               </span>
             </span>
             <span className="shrink-0 text-right">
@@ -153,7 +153,7 @@ function CollegeGrades({ report, decimals }: { report: CollegeReport; decimals: 
             {report.rows.map((r) => (
               <tr key={r.offering.id}>
                 <td className="px-1.5 py-2">
-                  <span className="font-mono text-xs">{r.offering.code}</span>
+                  <span className="num text-xs">{r.offering.code}</span>
                   <span className="block max-w-[12rem] truncate text-xs text-muted">{r.offering.title}</span>
                 </td>
                 <td className={`${td} text-right`}>{r.offering.units}{r.offering.non_credit ? "*" : ""}</td>
@@ -162,7 +162,7 @@ function CollegeGrades({ report, decimals }: { report: CollegeReport; decimals: 
                   return (
                     <td key={p} className={`${td} text-right`}>
                       {c.mark ?? (c.grade != null ? fmtGrade(c.grade) : "—")}
-                      {c.percent != null && <span className="block text-[11px] text-muted">{c.percent}%</span>}
+                      {c.percent != null && <span className="block text-xs text-muted">{c.percent}%</span>}
                     </td>
                   );
                 })}
@@ -226,8 +226,8 @@ function K12Grades({ report }: { report: K12Report }) {
         </span>
       </div>
       <p className="text-xs text-muted">
-        The final grade shows once every quarter is posted. Outstanding 90-100 · Very Satisfactory 85-89 · Satisfactory 80-84 ·
-        Fairly Satisfactory 75-79 · Did Not Meet Expectations below 75.
+        The final grade shows once every quarter is posted. Outstanding 90-100, Very Satisfactory 85-89, Satisfactory 80-84,
+        Fairly Satisfactory 75-79, Did Not Meet Expectations below 75.
       </p>
     </>
   );

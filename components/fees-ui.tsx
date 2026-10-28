@@ -23,13 +23,13 @@ export const fmtDay = (iso: string | null, empty = "Upon enrollment") =>
       })
     : empty;
 
-const STATUS_STYLE: Record<InstallmentStatus, string> = {
-  paid: "bg-emerald-100 text-emerald-800",
-  carried: "bg-sky-100 text-sky-800",
-  partial: "bg-amber-100 text-amber-800",
-  due: "bg-wait-soft text-wait",
-  overdue: "bg-danger-soft text-danger",
-  upcoming: "bg-slate-100 text-slate-700",
+const STATUS_TONE: Record<InstallmentStatus, string> = {
+  paid: "pill-go",
+  carried: "pill-muted",
+  partial: "pill-ink",
+  due: "pill-ink",
+  overdue: "pill-warn",
+  upcoming: "pill-muted",
 };
 const STATUS_TEXT: Record<InstallmentStatus, string> = {
   paid: "Paid",
@@ -42,7 +42,7 @@ const STATUS_TEXT: Record<InstallmentStatus, string> = {
 
 export function DueChip({ status }: { status: InstallmentStatus }) {
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${STATUS_STYLE[status]} print:border print:border-current print:bg-transparent`}>
+    <span className={`pill ${STATUS_TONE[status]} print:border print:border-current print:bg-transparent`}>
       {STATUS_TEXT[status]}
     </span>
   );

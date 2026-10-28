@@ -1,98 +1,95 @@
 "use client";
 
-// Left list in "classes" mode: the teacher's classes, or (registrar / dean)
-// the classes with grades to approve and change requests.
+// List column of the Grades module: the teacher's classes, or (registrar / dean)
+// the classes with grade sheets to approve and change requests.
 
-import { useState } from "react";
+import { useState, type RefObject } from "react";
 import type { ClassListItem } from "@/lib/data/store";
 import type { Role } from "@/lib/enrollment/types";
-import { Chip, inputClass } from "./ui";
+import { Chip, Pill } from "./ui";
+import { ListPane, ListRow } from "./shell/Shell";
 
 export default function ClassList({
   items,
   role,
   selectedId,
   onSelect,
+  searchRef,
+  listRef,
 }: {
   items: ClassListItem[];
   role: Role;
   selectedId: string | null;
   onSelect: (offeringId: string) => void;
+  searchRef: RefObject<HTMLInputElement | null>;
+  listRef: RefObject<HTMLUListElement | null>;
 }) {
   const isTeacher = role === "teacher";
-  const [onlyWaiting, setOnlyWaiting] = useState(!isTeacher);
+  const [onlyWaiting, setOnlyWaiting] = useState(!isTeacher && items.some((i) => i.waiting));
   const [q, setQ] = useState("");
   const waiting = items.filter((i) => i.waiting).length;
   const shown = items.filter((i) => {
     if (onlyWaiting && !i.waiting) return false;
-    if (q && !`${i.code} ${i.title} ${i.teacher_name ?? ""} ${i.level ?? ""}`.toLowerCase().includes(q.toLowerCase())) return false;
+    if (q && !`${i.code} ${i.title} ${i.teacher_name ?? ""} ${i.level ?? ""} ${i.term_label}`.toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   });
 
   return (
-    <aside className="flex flex-col rounded-2xl border border-line bg-surface lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)]" data-testid="class-list">
-      <div className="space-y-3 border-b border-line p-4">
-        <div>
-          <h1 className="text-base font-semibold">{isTeacher ? "My classes" : "Grades"}</h1>
-          <p className="text-xs text-muted">
-            {isTeacher ? `${items.length} classes · open one to enter grades` : `${waiting} waiting on you`}
-          </p>
-        </div>
-        <input
-          type="search"
-          placeholder="Search class, subject, teacher…"
-          aria-label="Search classes"
-          className={inputClass}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <div className="flex flex-wrap gap-1.5">
-          <Chip active={onlyWaiting} onClick={() => setOnlyWaiting(true)}>
-            {isTeacher ? "Needs you" : "Grades to approve"} ({waiting})
+    <ListPane
+      ref={listRef}
+      title={isTeacher ? "My classes" : "Grades"}
+      subtitle={
+        isTeacher
+          ? `${items.length} classes${waiting ? `, ${waiting} need you` : ""}`
+          : waiting > 0
+            ? `${waiting} waiting on you`
+            : "Nothing waiting on you"
+      }
+      testId="class-list"
+      listTestId="class-rows"
+      search={{ value: q, onChange: setQ, placeholder: "Search class, subject, teacher", inputRef: searchRef, label: "Search classes" }}
+      filters={
+        <div className="flex gap-1.5">
+          <Chip active={onlyWaiting} onClick={() => setOnlyWaiting(true)} testId="filter-waiting">
+            {isTeacher ? "Needs you" : "Grades to approve"} <span className="num">{waiting}</span>
           </Chip>
-          <Chip active={!onlyWaiting} onClick={() => setOnlyWaiting(false)}>All classes</Chip>
+          <Chip active={!onlyWaiting} onClick={() => setOnlyWaiting(false)} testId="filter-all">All classes</Chip>
         </div>
-      </div>
-      <ul className="flex-1 divide-y divide-line overflow-y-auto" data-testid="class-rows">
-        {shown.map((i) => (
-          <li key={i.offering_id}>
-            <button
-              type="button"
-              data-testid={`class-${i.code}`}
-              onClick={() => onSelect(i.offering_id)}
-              className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors ${
-                selectedId === i.offering_id ? "bg-brand-soft" : "hover:bg-paper"
-              }`}
-            >
-              <span aria-hidden className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${i.waiting ? "bg-wait" : "bg-transparent"}`} />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium">
-                    <span className="font-mono text-xs">{i.code}</span> · {i.title}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted">{i.students} {i.students === 1 ? "student" : "students"}</span>
-                </span>
-                <span className="mt-0.5 block truncate text-xs text-muted">
-                  {i.term_label}
-                  {!isTeacher && i.teacher_name ? ` · ${i.teacher_name}` : ""}
-                </span>
-                {(i.submitted > 0 || i.pending_changes > 0 || i.returned > 0) && (
-                  <span className="mt-1 flex flex-wrap gap-x-3 text-xs font-medium text-wait">
-                    {i.submitted > 0 && <span>{i.submitted} submitted</span>}
-                    {i.pending_changes > 0 && <span>{i.pending_changes} change request{i.pending_changes > 1 ? "s" : ""}</span>}
-                    {i.returned > 0 && <span className="text-danger">{i.returned} returned</span>}
-                  </span>
-                )}
+      }
+      empty={
+        shown.length === 0 ? (
+          <li className="px-6 py-10 text-center text-sm text-muted">
+            {onlyWaiting
+              ? isTeacher
+                ? "Nothing needs you now. Open All classes to type grades."
+                : "No grade sheets to approve. Submitted sheets show up here."
+              : "No classes match. Clear the search."}
+          </li>
+        ) : undefined
+      }
+    >
+      {shown.map((i) => (
+        <ListRow key={i.offering_id} selected={selectedId === i.offering_id} waiting={i.waiting} onClick={() => onSelect(i.offering_id)} testId={`class-${i.code}`}>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center justify-between gap-2">
+              <span className="truncate text-sm">
+                <span className="num font-semibold">{i.code}</span>
+                <span className="ml-2 text-muted">{i.title}</span>
               </span>
-            </button>
-          </li>
-        ))}
-        {shown.length === 0 && (
-          <li className="px-4 py-10 text-center text-sm text-muted">
-            {onlyWaiting ? "Nothing waiting. 🎉" : "No classes."}
-          </li>
-        )}
-      </ul>
-    </aside>
+              <span className="num shrink-0 text-xs text-muted">{i.students} {i.students === 1 ? "student" : "students"}</span>
+            </span>
+            <span className="mt-0.5 flex items-center gap-2.5 text-xs text-muted">
+              <span className="truncate">{i.term_label}</span>
+              {!isTeacher && i.teacher_name && <span className="truncate">{i.teacher_name}</span>}
+              <span className="ml-auto flex shrink-0 gap-1">
+                {i.submitted > 0 && <Pill tone="ink">{i.submitted} submitted</Pill>}
+                {i.pending_changes > 0 && <Pill tone="ink">{i.pending_changes} change</Pill>}
+                {i.returned > 0 && <Pill tone="warn">{i.returned} returned</Pill>}
+              </span>
+            </span>
+          </span>
+        </ListRow>
+      ))}
+    </ListPane>
   );
 }

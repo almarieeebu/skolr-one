@@ -30,7 +30,8 @@ import {
   type KinderMark,
   type Quarter,
 } from "@/lib/grades";
-import { Button, Field, Warnings, inputClass } from "./ui";
+import { Button, Field, Modal, Pill, SidePanel, SubTabs, Warnings, inputClass, type TabDef } from "./ui";
+import { DetailPane } from "./shell/Shell";
 import { CollegeTable, K12Table, KinderTable, type ItemDraft } from "./GradeTables";
 import { SheetChip, cellText, fmtDue, fmtWhen, parseCollegeCell, parseScore } from "./grades-ui";
 
@@ -51,6 +52,7 @@ export default function ClassWorkspace({
   store: DataStore;
   session: SessionInfo;
   offeringId: string;
+  /** Phones: back to the class list. */
   onBack: () => void;
   onChanged: (msg: string) => void;
 }) {
@@ -66,6 +68,10 @@ export default function ClassWorkspace({
   const [marks, setMarks] = useState<Record<string, Record<string, KinderMark | "">>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<"sheet" | "approve" | "changes" | "history">("sheet");
+  const [returnOpen, setReturnOpen] = useState(false);
+  const [returnNote, setReturnNote] = useState("");
+  const [askOpen, setAskOpen] = useState(false);
 
   const load = useCallback(async () => {
     const d = await store.getClassSheet(offeringId);
@@ -258,9 +264,7 @@ export default function ClassWorkspace({
   };
 
   if (!data) {
-    return (
-      <div className="rounded-2xl border border-line bg-surface p-10 text-center text-sm text-muted lg:col-span-2">Loading class…</div>
-    );
+    return <p className="p-8 text-sm text-muted">Loading class</p>;
   }
 
   const ctx = {
@@ -278,271 +282,344 @@ export default function ClassWorkspace({
   const roster = data.roster;
   const nameOf = (enrollmentId: string) => roster.find((r) => r.enrollment_id === enrollmentId)?.name ?? "Student";
   const labelOfSheet = (s: Pick<GradeSheet, "period" | "learning_area">) =>
-    `${periodLabel(s.period)}${s.learning_area && s.learning_area !== KINDER_AREA ? ` · ${areas.find((a) => a.code === s.learning_area)?.name ?? s.learning_area}` : ""}`;
+    `${periodLabel(s.period)}${s.learning_area && s.learning_area !== KINDER_AREA ? ` ${areas.find((a) => a.code === s.learning_area)?.name ?? s.learning_area}` : ""}`;
+  const currentLabel = labelOfSheet({ period: current, learning_area: areaCode });
+
+  const isApprover = role === "registrar" || role === "dean";
+  const submitted = data.sheets.filter((s) => s.status === "submitted");
+  const pendingChanges = data.requests.filter((r) => r.status === "pending");
+  const canAsk = role === "teacher" && data.teaches && sheet?.status === "posted" && kind !== "kinder";
+  const historyRows = sheet ? data.history.filter((h) => h.sheet_id === sheet.id) : [];
+  const canApproveCurrent = !!sheet && sheet.status === "submitted" && sheetActions({ ...ctx, sheet }).includes("approve");
+  const canReturnCurrent = !!sheet && sheet.status === "submitted" && isApprover;
+
+  const tabs: TabDef[] = [{ id: "sheet", label: "Grade sheet" }];
+  if (isApprover) tabs.push({ id: "approve", label: "To approve", badge: submitted.length || undefined });
+  if (canAsk || data.requests.length > 0) tabs.push({ id: "changes", label: "Change requests", badge: pendingChanges.length || undefined });
+  tabs.push({ id: "history", label: "History", badge: historyRows.length || undefined });
+  const activeTab = tabs.some((t) => t.id === tab) ? tab : "sheet";
+
+  const approve = (s: GradeSheet) =>
+    act(async () => {
+      const r = await store.runSheetAction(s.id, { type: "approve" });
+      if (!r.ok) throw new Error(r.error);
+      return `${labelOfSheet(s)} approved and posted.`;
+    });
+  const sendBack = (s: GradeSheet, note: string) =>
+    act(async () => {
+      const r = await store.runSheetAction(s.id, { type: "return", note });
+      if (!r.ok) throw new Error(r.error);
+      return `${labelOfSheet(s)} returned to the teacher.`;
+    });
+
+  const header = (
+    <div className="space-y-2.5" data-testid="grade-sheet">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 className="text-xl font-semibold" data-testid="class-title">
+              <span className="num">{data.offering.code}</span> <span className="font-medium text-muted">{data.offering.title}</span>
+            </h2>
+            <span data-testid="sheet-status"><SheetChip status={sheet?.status ?? null} /></span>
+          </div>
+          <p className="mt-0.5 flex flex-wrap gap-x-4 text-sm text-muted">
+            <span>{termLabel(data.term)}</span>
+            <span>{data.teacher_name ?? "No teacher"}</span>
+            <span className="num">{roster.length} {roster.length === 1 ? "student" : "students"}</span>
+            {kind === "college" && <span className="num">{data.offering.units} units{data.offering.non_credit ? ", non-credit" : ""}</span>}
+          </p>
+        </div>
+      </div>
+
+      {kind !== "college" && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {kind === "k12" && (
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-xs font-medium text-muted">Learning area</span>
+              <select
+                data-testid="area-select"
+                className={`${inputClass} w-auto py-1`}
+                value={areaCode ?? ""}
+                disabled={busy}
+                onChange={(e) => {
+                  const a = areas.find((x) => x.code === e.target.value)!;
+                  void go(a.quarters.includes(current as Quarter) ? current : a.quarters[0], a.code);
+                }}
+              >
+                {areas.map((a) => {
+                  const st = sheetOf(current, a.code)?.status;
+                  return (
+                    <option key={a.code} value={a.code}>
+                      {a.name}{st ? `, ${st}` : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+          )}
+          <div role="tablist" aria-label="Quarter" className="flex max-w-full flex-wrap gap-1">
+            {runs.map((p) => (
+              <button
+                key={p}
+                type="button"
+                role="tab"
+                aria-selected={p === current}
+                data-testid={`period-${p}`}
+                disabled={busy}
+                onClick={() => void go(p)}
+                className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${p === current ? "border-ink bg-select text-ink" : "border-line text-muted hover:text-ink"}`}
+              >
+                {periodLabel(p)}
+                <SheetChip status={statusOf(p)} />
+              </button>
+            ))}
+          </div>
+          {areaInfo && (
+            <p className="text-xs text-muted">
+              Weights: written work {data.settings.k12_weights[areaInfo.group].ww}%, performance tasks {data.settings.k12_weights[areaInfo.group].pt}%, quarterly assessment {data.settings.k12_weights[areaInfo.group].qa}%
+            </p>
+          )}
+        </div>
+      )}
+
+      {sheet?.status === "returned" && sheet.return_note && (
+        <p className="rounded-r-md border-l-2 border-warn bg-warn/8 px-3 py-1.5 text-sm text-warn" data-testid="return-note">
+          <strong className="font-semibold">Returned:</strong> {sheet.return_note}
+        </p>
+      )}
+      {late && <Warnings items={[late]} />}
+    </div>
+  );
+
+  // ---------- dock ----------
+  const deadlineText = `${currentLabel}: ${sheet ? SHEET_STATUS_TEXT[sheet.status] : "not started"}${ctx.deadline ? `, due ${fmtDue(ctx.deadline)}` : ""}${sheet?.late_allowed ? " (late allowed)" : ""}`;
+  const dock = (
+    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-6">
+      <div className="min-w-0 text-sm">
+        {error ? (
+          <p className="font-medium text-stop" role="alert" data-testid="grade-error">{error}</p>
+        ) : role === "teacher" && sheet && !isEditable(sheet.status) ? (
+          <p className="text-muted" data-testid="sheet-locked">
+            {sheet.status === "submitted"
+              ? `Waiting for the ${ctx.useDean ? "dean" : "registrar"} to approve.`
+              : "Posted and locked. To change a grade, ask for a grade change."}
+          </p>
+        ) : (
+          <p className="text-muted">
+            <span className="font-medium text-ink" data-testid="sheet-deadline">{deadlineText}</span>
+            {editable && roster.length > 0 && (
+              <span className="ml-3 hidden xl:inline">
+                {kind === "college"
+                  ? "Type a percent or INC, DRP, W. Tab moves right, Enter moves down."
+                  : kind === "k12"
+                    ? "Type raw scores. Tab moves right, Enter moves down."
+                    : "Mark each domain: Beginning, Developing or Consistent."}
+              </span>
+            )}
+            {!sheet && role === "registrar" && ctx.deadline && lateWarning(ctx) && (
+              <span className="ml-3">The deadline has passed. You can allow a late submission once the teacher saves a draft.</span>
+            )}
+          </p>
+        )}
+      </div>
+      <div className="flex shrink-0 flex-wrap justify-end gap-2">
+        {actions.includes("allow_late") && (
+          <Button variant="secondary" disabled={busy || !sheet} data-testid="grade-allow-late" className="max-md:flex-1"
+            onClick={() => act(async () => {
+              const r = await store.runSheetAction(sheet!.id, { type: "allow_late" });
+              if (!r.ok) throw new Error(r.error);
+              return "Late submission allowed.";
+            })}
+          >
+            {SHEET_ACTION_LABEL.allow_late}
+          </Button>
+        )}
+        {canReturnCurrent && (
+          <Button variant="danger" disabled={busy} onClick={() => { setReturnNote(""); setReturnOpen(true); }} data-testid="dock-return" className="max-md:flex-1">
+            Return to teacher
+          </Button>
+        )}
+        {canApproveCurrent && (
+          <Button disabled={busy} onClick={() => approve(sheet!)} data-testid="dock-approve" className="max-md:flex-1">
+            Approve and post
+          </Button>
+        )}
+        {canAsk && (
+          <Button variant="secondary" onClick={() => setAskOpen(true)} data-testid="cgr-open" className="max-md:flex-1">
+            Ask for a grade change
+          </Button>
+        )}
+        {actions.includes("save") && (
+          <>
+            <Button variant="secondary" disabled={busy} onClick={saveDraft} data-testid="grade-save" className="max-md:flex-1">
+              {dirtyPeriods.size ? "Save draft*" : "Save draft"}
+            </Button>
+            <Button disabled={busy || roster.length === 0} onClick={submit} data-testid="grade-submit" className="max-md:flex-1">
+              Submit {currentLabel}
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <>
-      {/* Middle: the grade sheet */}
-      <div className="min-w-0 space-y-3">
-        <Button variant="ghost" className="lg:hidden" onClick={onBack}>
-          ← Back to classes
-        </Button>
-        <article className="overflow-hidden rounded-2xl border border-line bg-surface" data-testid="grade-sheet">
-          <div className="space-y-3 p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="text-xl font-semibold" data-testid="class-title">
-                  <span className="font-mono text-base">{data.offering.code}</span> · {data.offering.title}
-                </h2>
-                <p className="mt-0.5 text-sm text-muted">
-                  {termLabel(data.term)} · {data.teacher_name ?? "No teacher"} · {roster.length} {roster.length === 1 ? "student" : "students"}
-                  {kind === "college" && ` · ${data.offering.units} units${data.offering.non_credit ? " (non-credit)" : ""}`}
-                </p>
-              </div>
-              <span data-testid="sheet-status"><SheetChip status={sheet?.status ?? null} /></span>
+      <DetailPane
+        onBack={onBack}
+        backLabel={role === "teacher" ? "My classes" : "Grades"}
+        header={header}
+        tabs={tabs.length > 1 ? <SubTabs tabs={tabs} value={activeTab} onChange={(t) => setTab(t as typeof tab)} idBase="class" label="Class sections" /> : undefined}
+        panelId="class-panel"
+        labelledBy={`class-tab-${activeTab}`}
+        flush={activeTab === "sheet"}
+        dock={dock}
+        testId="class-detail"
+      >
+        {activeTab === "sheet" &&
+          (roster.length === 0 ? (
+            <p className="p-6 text-sm text-muted">No officially enrolled students in this class yet. Students show up here once the registrar approves their enrollment.</p>
+          ) : (
+            // The sheet scrolls in both directions inside the pane; the header row and the name column stay put.
+            <div className="h-full overflow-auto" data-testid="sheet-scroll">
+              {kind === "college" && (
+                <CollegeTable
+                  roster={roster}
+                  values={college}
+                  editable={Object.fromEntries(COLLEGE_PERIODS.map((p) => [p, teacherCanEdit(sheetOf(p))])) as Record<CollegePeriod, boolean>}
+                  statuses={Object.fromEntries(COLLEGE_PERIODS.map((p) => [p, statusOf(p)])) as Record<CollegePeriod, GradeSheet["status"] | null>}
+                  current={current as CollegePeriod}
+                  settings={data.settings}
+                  onPickPeriod={(p) => setPeriod(p)}
+                  onChange={(p, eid, text) => {
+                    setCollege((c) => ({ ...c, [p]: { ...c[p], [eid]: text } }));
+                    markDirty(p);
+                  }}
+                />
+              )}
+              {kind === "k12" && areaInfo && (
+                <K12Table
+                  roster={roster}
+                  items={items}
+                  scores={scores}
+                  weights={data.settings.k12_weights[areaInfo.group]}
+                  editable={editable}
+                  onScore={(eid, itemId, text) => {
+                    setScores((s) => ({ ...s, [eid]: { ...s[eid], [itemId]: text } }));
+                    markDirty(current);
+                  }}
+                  onItem={(id, patch) => {
+                    setItems((its) => its.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+                    markDirty(current);
+                  }}
+                  onAddItem={(c) => {
+                    const n = items.filter((i) => i.component === c).length + 1;
+                    const label = c === "ww" ? `Quiz ${n}` : c === "pt" ? `Task ${n}` : n === 1 ? "Quarterly exam" : `Exam ${n}`;
+                    const order: K12Component[] = ["ww", "pt", "qa"];
+                    setItems((its) =>
+                      [...its, { id: newId(), component: c, label, max_score: c === "ww" ? 20 : 50, position: its.length + 1 }].sort(
+                        (a, b) => order.indexOf(a.component) - order.indexOf(b.component) || a.position - b.position,
+                      ),
+                    );
+                    markDirty(current);
+                  }}
+                  onRemoveItem={(id) => {
+                    setItems((its) => its.filter((i) => i.id !== id));
+                    markDirty(current);
+                  }}
+                />
+              )}
+              {kind === "kinder" && (
+                <KinderTable
+                  roster={roster}
+                  marks={marks}
+                  editable={editable}
+                  onMark={(eid, d, m) => {
+                    setMarks((x) => ({ ...x, [eid]: { ...x[eid], [d]: m } }));
+                    markDirty(current);
+                  }}
+                />
+              )}
             </div>
+          ))}
 
-            {kind !== "college" && (
-              <div className="flex flex-wrap items-end gap-3">
-                {kind === "k12" && (
-                  <Field label="Learning area">
-                    <select
-                      data-testid="area-select"
-                      className={`${inputClass} w-auto`}
-                      value={areaCode ?? ""}
-                      disabled={busy}
-                      onChange={(e) => {
-                        const a = areas.find((x) => x.code === e.target.value)!;
-                        void go(a.quarters.includes(current as Quarter) ? current : a.quarters[0], a.code);
-                      }}
-                    >
-                      {areas.map((a) => {
-                        const st = sheetOf(current, a.code)?.status;
-                        return (
-                          <option key={a.code} value={a.code}>
-                            {a.name}{st ? ` · ${st}` : ""}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </Field>
-                )}
-                <div role="tablist" aria-label="Quarter" className="grid w-full grid-cols-4 gap-1 sm:flex sm:w-auto">
-                  {runs.map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      role="tab"
-                      aria-selected={p === current}
-                      data-testid={`period-${p}`}
-                      disabled={busy}
-                      onClick={() => void go(p)}
-                      className={`flex flex-col items-center rounded-lg border px-1 py-1 text-xs sm:px-3 ${p === current ? "border-brand bg-brand-soft font-semibold" : "border-line"}`}
-                    >
-                      {periodLabel(p)}
-                      <SheetChip status={statusOf(p)} />
-                    </button>
-                  ))}
-                </div>
-                {areaInfo && (
-                  <p className="text-xs text-muted">
-                    Weights: WW {data.settings.k12_weights[areaInfo.group].ww}% · PT {data.settings.k12_weights[areaInfo.group].pt}% · QA {data.settings.k12_weights[areaInfo.group].qa}%
-                  </p>
-                )}
-              </div>
-            )}
+        {activeTab === "approve" && (
+          <ApproveQueue
+            sheets={submitted}
+            label={labelOfSheet}
+            canApprove={(s) => sheetActions({ ...ctx, sheet: s }).includes("approve")}
+            busy={busy}
+            onOpen={(s) => {
+              if (kind === "k12" && s.learning_area) setArea(s.learning_area);
+              setPeriod(s.period);
+              setTab("sheet");
+            }}
+            onApprove={approve}
+            onReturn={sendBack}
+          />
+        )}
 
-            {sheet?.status === "returned" && sheet.return_note && (
-              <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger" data-testid="return-note">
-                <strong>Returned:</strong> {sheet.return_note}
-              </p>
-            )}
-            {late && <Warnings items={[late]} />}
+        {activeTab === "changes" && (
+          <ChangeRequestList data={data} role={role} sheet={sheet} nameOf={nameOf} label={labelOfSheet} busy={busy}
+            onDecide={(req, ok, note) => act(async () => {
+              const r = await store.decideGradeChange(req.id, ok, note);
+              if (!r.ok) throw new Error(r.error);
+              return ok ? "Grade change approved and logged." : "Grade change not approved.";
+            })}
+          />
+        )}
+
+        {activeTab === "history" && <SheetHistory rows={historyRows} label={currentLabel} />}
+      </DetailPane>
+
+      <Modal title={`Return ${currentLabel} to the teacher`} open={returnOpen} onClose={() => setReturnOpen(false)}>
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setReturnOpen(false);
+            void sendBack(sheet!, returnNote);
+          }}
+        >
+          <Field label="What should the teacher fix?">
+            <textarea className={inputClass} rows={3} value={returnNote} onChange={(e) => setReturnNote(e.target.value)} data-testid="dock-return-text" />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setReturnOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="danger" disabled={busy || !returnNote.trim()}>Return to teacher</Button>
           </div>
+        </form>
+      </Modal>
 
-          <div className="border-t border-line">
-            {roster.length === 0 ? (
-              <p className="p-5 text-sm text-muted">No officially enrolled students in this class yet.</p>
-            ) : (
-              // The sheet scrolls sideways inside this box only (the page never does).
-              <div className="max-w-full overflow-x-auto px-3 py-3" data-testid="sheet-scroll">
-                {kind === "college" && (
-                  <CollegeTable
-                    roster={roster}
-                    values={college}
-                    editable={Object.fromEntries(COLLEGE_PERIODS.map((p) => [p, teacherCanEdit(sheetOf(p))])) as Record<CollegePeriod, boolean>}
-                    statuses={Object.fromEntries(COLLEGE_PERIODS.map((p) => [p, statusOf(p)])) as Record<CollegePeriod, GradeSheet["status"] | null>}
-                    current={current as CollegePeriod}
-                    settings={data.settings}
-                    onPickPeriod={(p) => setPeriod(p)}
-                    onChange={(p, eid, text) => {
-                      setCollege((c) => ({ ...c, [p]: { ...c[p], [eid]: text } }));
-                      markDirty(p);
-                    }}
-                  />
-                )}
-                {kind === "k12" && areaInfo && (
-                  <K12Table
-                    roster={roster}
-                    items={items}
-                    scores={scores}
-                    weights={data.settings.k12_weights[areaInfo.group]}
-                    editable={editable}
-                    onScore={(eid, itemId, text) => {
-                      setScores((s) => ({ ...s, [eid]: { ...s[eid], [itemId]: text } }));
-                      markDirty(current);
-                    }}
-                    onItem={(id, patch) => {
-                      setItems((its) => its.map((i) => (i.id === id ? { ...i, ...patch } : i)));
-                      markDirty(current);
-                    }}
-                    onAddItem={(c) => {
-                      const n = items.filter((i) => i.component === c).length + 1;
-                      const label = c === "ww" ? `Quiz ${n}` : c === "pt" ? `Task ${n}` : n === 1 ? "Quarterly exam" : `Exam ${n}`;
-                      const order: K12Component[] = ["ww", "pt", "qa"];
-                      setItems((its) =>
-                        [...its, { id: newId(), component: c, label, max_score: c === "ww" ? 20 : 50, position: its.length + 1 }].sort(
-                          (a, b) => order.indexOf(a.component) - order.indexOf(b.component) || a.position - b.position,
-                        ),
-                      );
-                      markDirty(current);
-                    }}
-                    onRemoveItem={(id) => {
-                      setItems((its) => its.filter((i) => i.id !== id));
-                      markDirty(current);
-                    }}
-                  />
-                )}
-                {kind === "kinder" && (
-                  <KinderTable
-                    roster={roster}
-                    marks={marks}
-                    editable={editable}
-                    onMark={(eid, d, m) => {
-                      setMarks((x) => ({ ...x, [eid]: { ...x[eid], [d]: m } }));
-                      markDirty(current);
-                    }}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-          {editable && roster.length > 0 && (
-            <p className="border-t border-line px-5 py-2 text-xs text-muted">
-              {kind === "college"
-                ? "Type the percent (0-100) or INC, DRP, W. Tab moves right, Enter moves down. The 1.00-5.00 grade shows under each percent."
-                : kind === "k12"
-                  ? "Type raw scores. Tab moves right, Enter moves down. PS = raw ÷ highest × 100, WS = PS × weight; blank scores count as 0 in the live grade."
-                  : "Mark each domain: Beginning, Developing or Consistent."}
-            </p>
-          )}
-        </article>
-      </div>
-
-      {/* Right: grade actions */}
-      <div className="min-w-0">
-        <aside className="space-y-4 rounded-2xl border border-line bg-surface p-5 lg:sticky lg:top-20" data-testid="grade-actions">
-          <div>
-            <h2 className="text-sm font-semibold">Grades · {labelOfSheet({ period: current, learning_area: areaCode })}</h2>
-            <p className="text-xs text-muted">
-              As <span className="capitalize">{role}</span> · {session.actor.name}
-            </p>
-          </div>
-          <dl className="space-y-1 text-sm">
-            <div className="flex justify-between gap-3"><dt className="text-muted">Status</dt><dd><SheetChip status={sheet?.status ?? null} /></dd></div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-muted">Deadline</dt>
-              <dd data-testid="sheet-deadline">{fmtDue(ctx.deadline) ?? "None"}{sheet?.late_allowed ? " (late allowed)" : ""}</dd>
-            </div>
-            {sheet?.submitted_at && <div className="flex justify-between gap-3"><dt className="text-muted">Submitted</dt><dd>{fmtWhen(sheet.submitted_at)}</dd></div>}
-            {sheet?.posted_at && <div className="flex justify-between gap-3"><dt className="text-muted">Posted</dt><dd>{fmtWhen(sheet.posted_at)}</dd></div>}
-          </dl>
-
-          {actions.includes("save") && (
-            <div className="space-y-2">
-              <Button variant="secondary" className="w-full" disabled={busy} onClick={saveDraft} data-testid="grade-save">
-                Save draft{dirtyPeriods.size ? " •" : ""}
-              </Button>
-              <Button className="w-full" disabled={busy || roster.length === 0} onClick={submit} data-testid="grade-submit">
-                Submit {labelOfSheet({ period: current, learning_area: areaCode })}
-              </Button>
-            </div>
-          )}
-          {role === "teacher" && sheet && !isEditable(sheet.status) && (
-            <p className="rounded-lg bg-paper px-3 py-3 text-sm text-muted" data-testid="sheet-locked">
-              {sheet.status === "submitted"
-                ? `Waiting for the ${ctx.useDean ? "dean" : "registrar"} to approve.`
-                : "Posted and locked. To change a grade, send a change request below."}
-            </p>
-          )}
-
-          {actions.includes("allow_late") && (
-            <Button variant="secondary" className="w-full" disabled={busy || !sheet} data-testid="grade-allow-late"
-              onClick={() => act(async () => {
-                const r = await store.runSheetAction(sheet!.id, { type: "allow_late" });
-                if (!r.ok) throw new Error(r.error);
-                return "Late submission allowed.";
-              })}
-            >
-              {SHEET_ACTION_LABEL.allow_late}
-            </Button>
-          )}
-          {!sheet && role === "registrar" && ctx.deadline && lateWarning(ctx) && (
-            <p className="text-xs text-muted">The deadline has passed and nothing is saved yet. You can allow a late submission once the teacher saves a draft.</p>
-          )}
-
-          {(role === "registrar" || role === "dean") && (
-            <ApproveQueue
-              sheets={data.sheets.filter((s) => s.status === "submitted")}
-              label={labelOfSheet}
-              canApprove={(s) => sheetActions({ ...ctx, sheet: s }).includes("approve")}
-              busy={busy}
-              onOpen={(s) => {
-                if (kind === "k12" && s.learning_area) setArea(s.learning_area);
-                setPeriod(s.period);
-              }}
-              onApprove={(s) => act(async () => {
-                const r = await store.runSheetAction(s.id, { type: "approve" });
-                if (!r.ok) throw new Error(r.error);
-                return `${labelOfSheet(s)} approved and posted.`;
-              })}
-              onReturn={(s, note) => act(async () => {
-                const r = await store.runSheetAction(s.id, { type: "return", note });
-                if (!r.ok) throw new Error(r.error);
-                return `${labelOfSheet(s)} returned to the teacher.`;
-              })}
-            />
-          )}
-
-          <ChangeRequests
+      <SidePanel title="Ask for a grade change" subtitle={`${data.offering.code} ${currentLabel}`} open={askOpen} onClose={() => setAskOpen(false)} testId="cgr-panel">
+        {sheet && (
+          <ChangeRequestForm
             data={data}
-            role={role}
             kind={kind}
             sheet={sheet}
             items={items}
-            nameOf={nameOf}
-            label={labelOfSheet}
             busy={busy}
-            onRequest={(entryId, value, reason) => act(async () => {
-              const r = await store.requestGradeChange(entryId, value, reason);
-              if (!r.ok) throw new Error(r.error);
-              return "Change request sent to the registrar.";
-            })}
-            onDecide={(req, approve, note) => act(async () => {
-              const r = await store.decideGradeChange(req.id, approve, note);
-              if (!r.ok) throw new Error(r.error);
-              return approve ? "Grade change approved and logged." : "Grade change not approved.";
-            })}
+            onRequest={(entryId, value, reason) => {
+              setAskOpen(false);
+              void act(async () => {
+                const r = await store.requestGradeChange(entryId, value, reason);
+                if (!r.ok) throw new Error(r.error);
+                return "Change request sent to the registrar.";
+              });
+            }}
           />
-
-          {error && <p className="text-sm text-danger" role="alert" data-testid="grade-error">{error}</p>}
-
-          <SheetHistory data={data} sheet={sheet} />
-        </aside>
-      </div>
+        )}
+      </SidePanel>
     </>
   );
 }
+
+const SHEET_STATUS_TEXT: Record<GradeSheet["status"], string> = {
+  draft: "draft",
+  submitted: "submitted",
+  returned: "returned",
+  posted: "posted",
+};
 
 function ApproveQueue({
   sheets,
@@ -564,35 +641,37 @@ function ApproveQueue({
   const [returning, setReturning] = useState<string | null>(null);
   const [note, setNote] = useState("");
   return (
-    <div className="space-y-2 border-t border-line pt-3" data-testid="approve-queue">
-      <p className="text-xs font-medium text-muted">Waiting for approval ({sheets.length})</p>
-      {sheets.length === 0 && <p className="text-sm text-muted">Nothing submitted in this class.</p>}
-      {sheets.map((s) => (
-        <div key={s.id} className="space-y-2 rounded-lg border border-line p-2.5">
-          <button type="button" className="block w-full text-left text-sm font-medium hover:underline" onClick={() => onOpen(s)}>
-            {label(s)}
-            <span className="block text-xs font-normal text-muted">Submitted {fmtWhen(s.submitted_at)}</span>
-          </button>
-          <div className="flex gap-2">
-            {canApprove(s) && (
-              <Button className="min-h-8 flex-1 px-2 text-xs" disabled={busy} onClick={() => onApprove(s)} data-testid={`approve-${s.period}${s.learning_area ? `-${s.learning_area}` : ""}`}>
-                Approve and post
-              </Button>
+    <div className="max-w-3xl" data-testid="approve-queue">
+      <p className="mb-2 text-sm font-semibold">Waiting for approval ({sheets.length})</p>
+      {sheets.length === 0 && <p className="text-sm text-muted">Nothing submitted in this class. Submitted grade sheets show up here.</p>}
+      <ul className="divide-y divide-line/70">
+        {sheets.map((s) => (
+          <li key={s.id} className="py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <button type="button" className="min-w-0 text-left text-sm hover:underline" onClick={() => onOpen(s)}>
+                <span className="font-semibold">{label(s)}</span>
+                <span className="block text-xs text-muted">Submitted {fmtWhen(s.submitted_at)}. Open the sheet to check it.</span>
+              </button>
+              <div className="flex gap-2">
+                <Button variant="danger" size="sm" disabled={busy} onClick={() => { setReturning(returning === s.id ? null : s.id); setNote(""); }}>
+                  Return
+                </Button>
+                {canApprove(s) && (
+                  <Button size="sm" disabled={busy} onClick={() => onApprove(s)} data-testid={`approve-${s.period}${s.learning_area ? `-${s.learning_area}` : ""}`}>
+                    Approve and post
+                  </Button>
+                )}
+              </div>
+            </div>
+            {returning === s.id && (
+              <form className="mt-2 flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); onReturn(s, note); setReturning(null); }}>
+                <input className={`${inputClass} flex-1`} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What should the teacher fix?" data-testid="return-text" />
+                <Button type="submit" variant="danger" disabled={busy || !note.trim()}>Return to teacher</Button>
+              </form>
             )}
-            <Button variant="secondary" className="min-h-8 flex-1 px-2 text-xs" disabled={busy} onClick={() => { setReturning(returning === s.id ? null : s.id); setNote(""); }}>
-              Return…
-            </Button>
-          </div>
-          {returning === s.id && (
-            <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); onReturn(s, note); setReturning(null); }}>
-              <textarea className={inputClass} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What should the teacher fix?" data-testid="return-text" />
-              <Button type="submit" variant="danger" className="min-h-8 w-full text-xs" disabled={busy || !note.trim()}>
-                Return to teacher
-              </Button>
-            </form>
-          )}
-        </div>
-      ))}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -600,52 +679,45 @@ function ApproveQueue({
 function valueText(v: EntryValue, data: ClassSheetDetail) {
   if (!v.scores) return describeValue(v);
   return Object.entries(v.scores)
-    .map(([id, sc]) => `${data.items.find((i) => i.id === id)?.label ?? "item"} ${sc ?? "—"}`)
+    .map(([id, sc]) => `${data.items.find((i) => i.id === id)?.label ?? "item"} ${sc ?? "blank"}`)
     .join(", ");
 }
 
-function ChangeRequests({
+function ChangeRequestForm({
   data,
-  role,
   kind,
   sheet,
   items,
-  nameOf,
-  label,
   busy,
   onRequest,
-  onDecide,
 }: {
   data: ClassSheetDetail;
-  role: SessionInfo["actor"]["role"];
   kind: ReturnType<typeof sheetKind>;
-  sheet: GradeSheet | null;
+  sheet: GradeSheet;
   items: ItemDraft[];
-  nameOf: (enrollmentId: string) => string;
-  label: (s: GradeSheet) => string;
   busy: boolean;
   onRequest: (entryId: string, value: EntryValue, reason: string) => void;
-  onDecide: (req: ChangeGradeRequest, approve: boolean, note: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [enrollmentId, setEnrollmentId] = useState(data.roster[0]?.enrollment_id ?? "");
-  const [text, setText] = useState("");
-  const [itemScores, setItemScores] = useState<Record<string, string>>({});
+  const valuesFor = (id: string) => {
+    const g = data.entries.find((e) => e.sheet_id === sheet.id && e.enrollment_id === id);
+    return {
+      text: g ? cellText(g.percent, g.mark) : "",
+      scores: Object.fromEntries(items.map((i) => [i.id, g?.scores[i.id] != null ? String(g.scores[i.id]) : ""])) as Record<string, string>,
+    };
+  };
+  const first = data.roster[0]?.enrollment_id ?? "";
+  const [enrollmentId, setEnrollmentId] = useState(first);
+  const [text, setText] = useState(() => valuesFor(first).text);
+  const [itemScores, setItemScores] = useState<Record<string, string>>(() => valuesFor(first).scores);
   const [reason, setReason] = useState("");
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  const sheetOfReq = (r: ChangeGradeRequest) => data.sheets.find((s) => s.id === r.sheet_id)!;
-  const canAsk = role === "teacher" && data.teaches && sheet?.status === "posted" && kind !== "kinder";
-  const entry = sheet && data.entries.find((e) => e.sheet_id === sheet.id && e.enrollment_id === enrollmentId);
-  const pending = data.requests.filter((r) => r.status === "pending");
-  const shown = role === "registrar" ? pending : data.requests.filter((r) => r.sheet_id === sheet?.id || r.status === "pending");
+  const entry = data.entries.find((e) => e.sheet_id === sheet.id && e.enrollment_id === enrollmentId);
 
   const pickStudent = (id: string) => {
     setEnrollmentId(id);
-    const g = sheet && data.entries.find((e) => e.sheet_id === sheet.id && e.enrollment_id === id);
-    setText(g ? cellText(g.percent, g.mark) : "");
-    setItemScores(Object.fromEntries(items.map((i) => [i.id, g?.scores[i.id] != null ? String(g.scores[i.id]) : ""])));
+    const v = valuesFor(id);
+    setText(v.text);
+    setItemScores(v.scores);
   };
-
   const send = () => {
     if (!entry) return;
     if (kind === "college") {
@@ -657,13 +729,9 @@ function ChangeRequests({
       for (const it of items) sc[it.id] = parseScore(itemScores[it.id] ?? "", Number(it.max_score)) ?? null;
       onRequest(entry.id, { percent: null, mark: null, scores: sc }, reason);
     }
-    setOpen(false);
-    setReason("");
   };
-
-  if (!canAsk && shown.length === 0) return null;
   const newQuarterly =
-    kind === "k12" && sheet?.subject_group
+    kind === "k12" && sheet.subject_group
       ? quarterlyGrade(
           items.map((i) => ({ ...i, max_score: Number(i.max_score) })),
           Object.fromEntries(items.map((i) => [i.id, parseScore(itemScores[i.id] ?? "", Number(i.max_score)) ?? null])),
@@ -672,99 +740,117 @@ function ChangeRequests({
       : null;
 
   return (
-    <div className="space-y-2 border-t border-line pt-3" data-testid="change-requests">
-      <p className="text-xs font-medium text-muted">Change grade requests</p>
-      {canAsk && (
-        <>
-          <Button variant="secondary" className="w-full" onClick={() => { setOpen(!open); pickStudent(enrollmentId); }} data-testid="cgr-open">
-            Ask for a grade change
-          </Button>
-          {open && (
-            <form className="space-y-2 rounded-lg border border-line p-3" onSubmit={(e) => { e.preventDefault(); send(); }} data-testid="cgr-form">
-              <Field label="Student">
-                <select className={inputClass} value={enrollmentId} onChange={(e) => pickStudent(e.target.value)} data-testid="cgr-student">
-                  {data.roster.map((r) => (
-                    <option key={r.enrollment_id} value={r.enrollment_id}>{r.name}</option>
-                  ))}
-                </select>
-              </Field>
-              {entry && (
-                <p className="text-xs text-muted">Posted now: {kind === "college" ? cellText(entry.percent, entry.mark) || "blank" : `quarterly ${entry.grade ?? "—"}`}</p>
-              )}
-              {kind === "college" ? (
-                <Field label="New percent (or INC / DRP / W)">
-                  <input className={inputClass} value={text} onChange={(e) => setText(e.target.value)} data-testid="cgr-value" />
-                </Field>
-              ) : (
-                <div className="grid grid-cols-3 gap-2">
-                  {items.map((it) => (
-                    <Field key={it.id} label={`${it.label} /${it.max_score}`}>
-                      <input className={inputClass} inputMode="decimal" value={itemScores[it.id] ?? ""} onChange={(e) => setItemScores((s) => ({ ...s, [it.id]: e.target.value }))} />
-                    </Field>
-                  ))}
-                  {newQuarterly != null && <p className="col-span-3 text-xs text-muted">New quarterly grade: <strong>{newQuarterly}</strong></p>}
-                </div>
-              )}
-              <Field label="Reason">
-                <textarea className={inputClass} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} data-testid="cgr-reason" placeholder="e.g. Final exam re-checked" />
-              </Field>
-              <Button type="submit" className="w-full" disabled={busy || !reason.trim()} data-testid="cgr-submit">
-                Send request
-              </Button>
-            </form>
-          )}
-        </>
+    <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); send(); }} data-testid="cgr-form">
+      <p className="text-sm text-muted">Posted grades are locked. The registrar approves or rejects the change, and it is kept in the sheet history.</p>
+      <Field label="Student">
+        <select className={inputClass} value={enrollmentId} onChange={(e) => pickStudent(e.target.value)} data-testid="cgr-student">
+          {data.roster.map((r) => (
+            <option key={r.enrollment_id} value={r.enrollment_id}>{r.name}</option>
+          ))}
+        </select>
+      </Field>
+      {entry && (
+        <p className="text-sm">Posted now: <span className="num font-semibold">{kind === "college" ? cellText(entry.percent, entry.mark) || "blank" : `quarterly ${entry.grade ?? "blank"}`}</span></p>
       )}
-      {shown.map((r) => {
-        const s = sheetOfReq(r);
-        return (
-          <div key={r.id} className="space-y-1.5 rounded-lg border border-line p-2.5 text-sm" data-testid="cgr-item">
-            <p className="font-medium">{nameOf(r.enrollment_id)} · {label(s)}</p>
-            <p className="text-xs">
-              {valueText(r.old_value, data)} → <strong>{valueText(r.new_value, data)}</strong>
-            </p>
-            <p className="text-xs text-muted">“{r.reason}” · {r.requested_by_name} · {fmtWhen(r.requested_at)}</p>
-            {r.status !== "pending" ? (
-              <p className={`text-xs font-medium ${r.status === "approved" ? "text-emerald-700" : "text-danger"}`}>
-                {r.status === "approved" ? "Approved" : "Not approved"}{r.decision_note ? `: ${r.decision_note}` : ""}
-              </p>
-            ) : role === "registrar" ? (
-              <div className="space-y-1.5">
-                <input className={inputClass} placeholder="Note (needed to reject)" value={notes[r.id] ?? ""} onChange={(e) => setNotes((n) => ({ ...n, [r.id]: e.target.value }))} data-testid="cgr-note" />
-                <div className="flex gap-2">
-                  <Button className="min-h-8 flex-1 px-2 text-xs" disabled={busy} onClick={() => onDecide(r, true, notes[r.id] ?? "")} data-testid="cgr-approve">
-                    Approve change
-                  </Button>
-                  <Button variant="danger" className="min-h-8 flex-1 px-2 text-xs" disabled={busy || !(notes[r.id] ?? "").trim()} onClick={() => onDecide(r, false, notes[r.id] ?? "")}>
-                    Reject
-                  </Button>
-                </div>
+      {kind === "college" ? (
+        <Field label="New percent (or INC, DRP, W)">
+          <input className={`${inputClass} num`} value={text} onChange={(e) => setText(e.target.value)} data-testid="cgr-value" />
+        </Field>
+      ) : (
+        <div className="grid grid-cols-3 gap-2">
+          {items.map((it) => (
+            <Field key={it.id} label={`${it.label} (of ${it.max_score})`}>
+              <input className={`${inputClass} num text-right`} inputMode="decimal" value={itemScores[it.id] ?? ""} onChange={(e) => setItemScores((s) => ({ ...s, [it.id]: e.target.value }))} />
+            </Field>
+          ))}
+          {newQuarterly != null && <p className="col-span-3 text-sm text-muted">New quarterly grade: <strong className="num text-ink">{newQuarterly}</strong></p>}
+        </div>
+      )}
+      <Field label="Reason">
+        <textarea className={inputClass} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} data-testid="cgr-reason" placeholder="e.g. Final exam re-checked" />
+      </Field>
+      <Button type="submit" className="w-full" disabled={busy || !reason.trim() || !entry} data-testid="cgr-submit">
+        Send request
+      </Button>
+    </form>
+  );
+}
+
+function ChangeRequestList({
+  data,
+  role,
+  sheet,
+  nameOf,
+  label,
+  busy,
+  onDecide,
+}: {
+  data: ClassSheetDetail;
+  role: SessionInfo["actor"]["role"];
+  sheet: GradeSheet | null;
+  nameOf: (enrollmentId: string) => string;
+  label: (s: GradeSheet) => string;
+  busy: boolean;
+  onDecide: (req: ChangeGradeRequest, approve: boolean, note: string) => void;
+}) {
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const sheetOfReq = (r: ChangeGradeRequest) => data.sheets.find((s) => s.id === r.sheet_id)!;
+  const shown = role === "registrar"
+    ? [...data.requests].sort((a, b) => Number(b.status === "pending") - Number(a.status === "pending"))
+    : data.requests.filter((r) => r.sheet_id === sheet?.id || r.status === "pending");
+  return (
+    <div className="max-w-3xl" data-testid="change-requests">
+      {shown.length === 0 && <p className="text-sm text-muted">No change requests yet. A teacher can ask for a change once a sheet is posted.</p>}
+      <ul className="divide-y divide-line/70">
+        {shown.map((r) => {
+          const s = sheetOfReq(r);
+          return (
+            <li key={r.id} className="space-y-1.5 py-3 text-sm" data-testid="cgr-item">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold">{nameOf(r.enrollment_id)} <span className="font-normal text-muted">{label(s)}</span></p>
+                {r.status === "pending" ? <Pill tone="ink">Pending</Pill> : r.status === "approved" ? <Pill tone="go">Approved</Pill> : <Pill tone="stop">Not approved</Pill>}
               </div>
-            ) : (
-              <p className="text-xs font-medium text-wait">Waiting for the registrar</p>
-            )}
-          </div>
-        );
-      })}
+              <p className="num">
+                {valueText(r.old_value, data)} → <strong>{valueText(r.new_value, data)}</strong>
+              </p>
+              <p className="text-xs text-muted">“{r.reason}” {r.requested_by_name}, {fmtWhen(r.requested_at)}</p>
+              {r.status !== "pending" ? (
+                r.decision_note ? <p className="text-xs text-muted">Note: {r.decision_note}</p> : null
+              ) : role === "registrar" ? (
+                <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+                  <input className={`${inputClass} flex-1`} placeholder="Note (needed to reject)" value={notes[r.id] ?? ""} onChange={(e) => setNotes((n) => ({ ...n, [r.id]: e.target.value }))} data-testid="cgr-note" />
+                  <div className="flex gap-2">
+                    <Button variant="danger" disabled={busy || !(notes[r.id] ?? "").trim()} onClick={() => onDecide(r, false, notes[r.id] ?? "")}>
+                      Reject
+                    </Button>
+                    <Button disabled={busy} onClick={() => onDecide(r, true, notes[r.id] ?? "")} data-testid="cgr-approve">
+                      Approve change
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs font-medium text-muted">Waiting for the registrar</p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
 
-function SheetHistory({ data, sheet }: { data: ClassSheetDetail; sheet: GradeSheet | null }) {
-  const rows = sheet ? data.history.filter((h) => h.sheet_id === sheet.id) : [];
-  if (!rows.length) return null;
+function SheetHistory({ rows, label }: { rows: ClassSheetDetail["history"]; label: string }) {
+  if (!rows.length) return <p className="text-sm text-muted">No history for {label} yet. Saves, submits, approvals and changes show up here.</p>;
   return (
-    <details className="border-t border-line pt-3" data-testid="sheet-history">
-      <summary className="cursor-pointer text-xs font-medium text-muted">History ({rows.length})</summary>
-      <ol className="mt-2 space-y-2 border-l-2 border-line pl-3">
-        {[...rows].reverse().map((h) => (
-          <li key={h.id} className="text-xs">
-            <p className="font-medium">{h.action.replace(/_/g, " ")}</p>
-            <p className="text-muted">{h.actor_name} · {fmtWhen(h.created_at)}</p>
-            {h.note && <p>“{h.note}”</p>}
-          </li>
-        ))}
-      </ol>
-    </details>
+    <ol className="max-w-3xl" data-testid="sheet-history">
+      {[...rows].reverse().map((h) => (
+        <li key={h.id} className="relative border-l border-line pb-4 pl-5 text-sm last:pb-0">
+          <span aria-hidden className="absolute top-1.5 -left-[4.5px] h-2 w-2 rounded-full bg-ink" />
+          <p className="font-semibold first-letter:uppercase">{h.action.replace(/_/g, " ")}</p>
+          <p className="text-xs text-muted">{h.actor_name}, {fmtWhen(h.created_at)}</p>
+          {h.note && <p className="mt-0.5">“{h.note}”</p>}
+        </li>
+      ))}
+    </ol>
   );
 }

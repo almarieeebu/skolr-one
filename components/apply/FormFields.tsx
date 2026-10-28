@@ -180,14 +180,14 @@ export function ProgramFields({
           <>
             <Labeled label="School year" required error={!year ? errors.term_id : undefined}>
               <select data-testid="ap-school-year" className={bigInput + bad(!year ? errors.term_id : undefined)} value={year} onChange={(e) => pickYear(e.target.value)}>
-                <option value="">Pick…</option>
+                <option value="">Pick one</option>
                 {years.map((y) => <option key={y}>{y}</option>)}
               </select>
             </Labeled>
             {isCollege && (
               <Labeled label="Semester" required error={year ? errors.term_id : undefined}>
                 <select data-testid="ap-semester" className={bigInput + bad(year ? errors.term_id : undefined)} value={f.term_id} onChange={(e) => set("term_id", e.target.value)} disabled={!year}>
-                  <option value="">{year ? "Pick…" : "Pick the school year first"}</option>
+                  <option value="">{year ? "Pick one" : "Pick the school year first"}</option>
                   {trackTerms.filter((t) => t.school_year === year).map((t) => (
                     <option key={t.id} value={t.id}>{semesterLabel(t.semester)}</option>
                   ))}
@@ -220,7 +220,7 @@ export function ProgramFields({
             {shs && (
               <Labeled label="Strand (Senior High)" required error={errors.strand}>
                 <select data-testid="ap-strand" className={bigInput + bad(errors.strand)} value={f.strand} onChange={(e) => set("strand", e.target.value)}>
-                  <option value="">Pick…</option>
+                  <option value="">Pick one</option>
                   {STRANDS.map((s) => <option key={s}>{s}</option>)}
                 </select>
               </Labeled>

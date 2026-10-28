@@ -19,7 +19,7 @@ import {
   type GradeSettings,
   type SubjectGroup,
 } from "@/lib/grades";
-import { Button, Field, Warnings, inputClass } from "./ui";
+import { Button, Field, StickyActions, Warnings, inputClass } from "./ui";
 
 const num = (v: string) => (v === "" ? 0 : Number(v));
 
@@ -42,7 +42,7 @@ export default function GradeSettingsPanel({ store, onDone }: { store: DataStore
     });
   }, [store]);
 
-  if (!s) return <p className="text-sm text-muted">Loading…</p>;
+  if (!s) return <p className="text-sm text-muted">Loading</p>;
   const set = <K extends keyof GradeSettings>(k: K, v: GradeSettings[K]) => setS({ ...s, [k]: v });
   const problems = validateGradeSettings(s);
   const due = (termId: string, period: GradePeriod) => s.deadlines.find((d) => d.term_id === termId && d.period === period)?.due_date ?? "";
@@ -67,6 +67,7 @@ export default function GradeSettingsPanel({ store, onDone }: { store: DataStore
 
   return (
     <div className="space-y-6" data-testid="grade-settings">
+      <div className="grid gap-x-10 gap-y-6 xl:grid-cols-2">
       <section className="space-y-3">
         <h3 className="text-sm font-semibold">College (CHED)</h3>
         <fieldset className="space-y-1.5">
@@ -113,7 +114,7 @@ export default function GradeSettingsPanel({ store, onDone }: { store: DataStore
                   <input aria-label="To percent" className={`${inputClass} px-2 text-right`} inputMode="numeric" value={String(r.max)} onChange={(e) => upd({ max: num(e.target.value) })} />
                   <span className="text-muted">% =</span>
                   <input aria-label="Grade" className={`${inputClass} px-2 text-right`} inputMode="decimal" value={String(r.grade)} onChange={(e) => upd({ grade: num(e.target.value) })} />
-                  <button type="button" aria-label="Remove row" className="px-1 text-muted hover:text-danger" onClick={() => set("college_scale", s.college_scale.filter((_, j) => j !== i))}>✕</button>
+                  <button type="button" aria-label="Remove row" className="px-1 text-muted hover:text-danger" onClick={() => set("college_scale", s.college_scale.filter((_, j) => j !== i))}>Remove</button>
                 </div>
               );
             })}
@@ -124,6 +125,7 @@ export default function GradeSettingsPanel({ store, onDone }: { store: DataStore
         </div>
       </section>
 
+      <div className="space-y-6">
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">K to 12 (DepEd) weights</h3>
         <div className="space-y-1.5">
@@ -164,11 +166,17 @@ export default function GradeSettingsPanel({ store, onDone }: { store: DataStore
         })}
       </section>
 
-      <Warnings items={problems} />
-      {error && <p className="text-sm font-medium text-danger" role="alert">{error}</p>}
-      <Button className="w-full" disabled={busy || problems.length > 0} onClick={save} data-testid="gs-save">
-        {busy ? "Saving…" : "Save grade settings"}
-      </Button>
+      </div>
+      </div>
+      <StickyActions>
+        <div className="min-w-0 flex-1">
+          <Warnings items={problems} />
+          {error && <p className="text-sm font-medium text-stop" role="alert">{error}</p>}
+        </div>
+        <Button disabled={busy || problems.length > 0} onClick={save} data-testid="gs-save">
+          {busy ? "Saving" : "Save grade settings"}
+        </Button>
+      </StickyActions>
     </div>
   );
 }
