@@ -207,6 +207,8 @@ an ESC/SHS voucher (Sofia) and a student with a carried balance from last year (
    - `supabase/migrations/0003_grades.sql` (grades: sheets, scores, settings, change requests, history)
    - `supabase/seed.sql` (Sample Academy and demo logins)
 
+   Ran it before, or it stopped half way (error like `type "app_role" already exists`)? Run `supabase/reset.sql` first, then the files above again. It removes only the skolr-one tables and the demo logins.
+
    With the CLI: `supabase link --project-ref <ref>` then `supabase db reset --linked`
    (runs the migration and the seed).
 3. Copy `.env.example` to `.env.local` and fill in the values from
