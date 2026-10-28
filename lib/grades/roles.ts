@@ -3,7 +3,7 @@
 // - registrar: approve / return / allow late, decide change requests, grade settings
 // - dean: approves instead of the registrar when the school uses the dean step
 // - student / parent: see their own POSTED grades and print the report card
-// - cashier: nothing about grades
+// - cashier, applicant: nothing about grades
 
 import type { Role } from "../enrollment/types";
 
@@ -29,6 +29,7 @@ export function gradePermissions(role: Role): GradePermissions {
     case "parent":
       return { view: true, postedOnly: true, classes: false, settings: false };
     case "cashier":
+    case "applicant":
       return { view: false, postedOnly: true, classes: false, settings: false };
   }
 }

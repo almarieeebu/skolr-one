@@ -13,6 +13,7 @@ import FeesSection from "./FeesSection";
 import GradesSection from "./GradesSection";
 import { gradePermissions } from "@/lib/grades";
 import { summaryOf } from "./fees-ui";
+import RequestList from "./RequestList";
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" }) : "—";
@@ -133,6 +134,13 @@ export default function StudentCard({
           <Row label="Birth date" value={fmtDate(s.birth_date)} />
           <Row label="Sex" value={s.sex ?? "—"} />
           <Row label="Student type" value={<span className="capitalize">{e.student_type}</span>} />
+          {s.applicant_no && <Row label="Applicant no." value={<span className="font-mono">{s.applicant_no}</span>} />}
+          {s.civil_status && <Row label="Civil status" value={s.civil_status} />}
+          {s.citizenship && <Row label="Citizenship" value={s.citizenship} />}
+          {s.contact_no && <Row label="Contact number" value={s.contact_no} />}
+          {s.email && <Row label="Email" value={<span className="break-all">{s.email}</span>} />}
+          {s.address && <Row label="Address" value={s.address} />}
+          {s.guardian_name && <Row label="Guardian" value={`${s.guardian_name}${s.guardian_contact ? ` · ${s.guardian_contact}` : ""}`} />}
           {isCollege ? (
             <Row label="Course" value={e.course} />
           ) : (
@@ -147,11 +155,33 @@ export default function StudentCard({
             </>
           )}
         </dl>
+        {e.application && (
+          <div className="mt-3 rounded-lg bg-paper p-3 text-xs text-muted" data-testid="online-application">
+            Sent online and certified true and correct by <span className="font-medium text-ink">{e.application.signed_name}</span> on{" "}
+            {fmtDate(e.application.signed_at)}.
+            {e.application.signature && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={e.application.signature} alt="Drawn signature" className="mt-2 h-12 rounded border border-line bg-surface" />
+            )}
+          </div>
+        )}
       </Section>
+
+      {(detail.requests?.length ?? 0) > 0 && (
+        <Section
+          title="Requests"
+          aside={`${detail.requests!.filter((r) => r.status === "open").length} waiting for reply`}
+          defaultOpen={detail.requests!.some((r) => r.status === "open")}
+        >
+          <div data-testid="card-requests">
+            <RequestList requests={detail.requests!} />
+          </div>
+        </Section>
+      )}
 
       <Section
         title="Papers"
-        aside={`${detail.documents.filter((d) => d.file_name).length}/${requiredDocs(e).length} in`}
+        aside={`${detail.documents.filter((d) => d.file_name && requiredDocs(e).includes(d.type)).length}/${requiredDocs(e).length} in`}
         defaultOpen={e.status === "applied"}
       >
         <Papers detail={detail} session={session} store={store} onChanged={onChanged} />
@@ -298,7 +328,7 @@ function Papers({
   );
 }
 
-function UploadButton({ label, onFile }: { label: string; onFile: (f: File) => Promise<void> }) {
+export function UploadButton({ label, onFile, testId }: { label: string; onFile: (f: File) => Promise<void>; testId?: string }) {
   const ref = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -308,6 +338,7 @@ function UploadButton({ label, onFile }: { label: string; onFile: (f: File) => P
         type="file"
         accept="image/*,application/pdf"
         className="hidden"
+        data-testid={testId}
         onChange={async (ev) => {
           const f = ev.target.files?.[0];
           if (!f) return;

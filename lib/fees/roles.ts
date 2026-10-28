@@ -3,7 +3,7 @@
 // - registrar: fee setup, discounts, term closing, void any payment (override, with reason)
 // - student / parent: see their own fees, schedule and statement (read only)
 // - dean: read only
-// - teacher: nothing about fees
+// - teacher, applicant: nothing about fees
 
 import type { Role } from "../enrollment/types";
 import type { Payment } from "./types";
@@ -30,6 +30,7 @@ export function feePermissions(role: Role): FeePermissions {
     case "parent":
       return { ...none, view: true };
     case "teacher":
+    case "applicant":
       return none;
   }
 }

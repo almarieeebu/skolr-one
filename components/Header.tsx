@@ -10,6 +10,8 @@ const DEMO_ROLES: { role: Role; label: string }[] = [
   { role: "student", label: "Student" },
   { role: "parent", label: "Parent" },
   { role: "teacher", label: "Teacher" },
+  // Opens the applicant portal as the sample applicant (Kevin Navarro).
+  { role: "applicant", label: "Applicant" },
 ];
 
 export default function Header({

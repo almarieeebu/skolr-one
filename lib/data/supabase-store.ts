@@ -19,6 +19,8 @@ import type {
 import { planAction, type Mutations, type PlanResult, type WithOverride } from "../enrollment/actions";
 import { isWaitingOn, sortForRole } from "../enrollment/queue";
 import { nextSeq } from "../enrollment/ids";
+import { DOC_LABEL } from "../enrollment/checks";
+import { checkNewPassword, loginKind, planDetailsUpdate, type ApplicantRequest, type DetailsChange, type RequestType } from "../applicant";
 import {
   balance,
   findSetup,
@@ -66,6 +68,11 @@ import {
   type EnrollmentListItem,
   type NewApplicationInput,
   type SessionInfo,
+  type ApplicantCredentials,
+  type ApplyInfo,
+  type PortalData,
+  type PublicApplicationInput,
+  type SimpleResult,
 } from "./store";
 
 const BUCKET = "documents";
@@ -145,7 +152,8 @@ export class SupabaseStore implements DataStore {
           "id, status, track, level, course, strand, dean_approved, fix_note, updated_at, student_id," +
             "student:students(first_name, middle_name, last_name, student_no)," +
             "term:terms(school_year, semester, track, is_open, id, school_id)," +
-            "ledger_entries(debit, credit)",
+            "ledger_entries(debit, credit)," +
+            "applicant_requests(status)",
         )
         .eq("school_id", school.id),
     ) as unknown as Array<
@@ -153,6 +161,7 @@ export class SupabaseStore implements DataStore {
         student: Student;
         term: Term;
         ledger_entries: { debit: number; credit: number }[];
+        applicant_requests: { status: string }[] | null;
       }
     >;
     const items = rows.map((r) => {
@@ -173,6 +182,8 @@ export class SupabaseStore implements DataStore {
         fix_note: r.fix_note,
         balance: Math.max(0, owed),
         updated_at: r.updated_at,
+        // RLS shows requests to the registrar and the owner only.
+        open_requests: actor.role === "registrar" ? (r.applicant_requests ?? []).filter((q) => q.status === "open").length : 0,
       };
       return { ...base, waiting: isWaitingOn(actor.role, base, school.settings) };
     });
@@ -182,7 +193,7 @@ export class SupabaseStore implements DataStore {
   async getDetail(enrollmentId: string): Promise<EnrollmentDetail | null> {
     const e = must(await this.sb.from("enrollments").select("*").eq("id", enrollmentId).maybeSingle()) as Enrollment | null;
     if (!e) return null;
-    const [student, term, documents, loads, offerings, setups, discounts, ledger, payments, history, counts] = await Promise.all([
+    const [student, term, documents, loads, offerings, setups, discounts, ledger, payments, history, counts, requests] = await Promise.all([
       this.sb.from("students").select("*").eq("id", e.student_id).single(),
       this.sb.from("terms").select("*").eq("id", e.term_id).single(),
       this.sb.from("documents").select("*").eq("enrollment_id", e.id),
@@ -195,6 +206,8 @@ export class SupabaseStore implements DataStore {
       this.sb.from("enrollment_history").select("*").eq("enrollment_id", e.id).order("created_at"),
       // Security-definer function: counts seats without exposing other students.
       this.sb.rpc("offering_taken_counts", { p_term_id: e.term_id, p_exclude_enrollment: e.id }),
+      // RLS: only the registrar and the applicant (owner) see requests.
+      this.sb.from("applicant_requests").select("*").eq("enrollment_id", e.id).order("created_at"),
     ]);
     const takenCounts: Record<string, number> = {};
     for (const row of (must(counts) as { offering_id: string; taken: number }[]) ?? []) {
@@ -216,6 +229,7 @@ export class SupabaseStore implements DataStore {
       payments: ((must(payments) ?? []) as Payment[]).map(numPayment),
       history: must(history) ?? [],
       passed_codes: await this.passedFor(e).catch(() => []),
+      requests: (requests.error ? [] : requests.data ?? []) as ApplicantRequest[],
     } as EnrollmentDetail;
   }
 
@@ -724,7 +738,8 @@ export class SupabaseStore implements DataStore {
   }
 
   async uploadDocument(enrollmentId: string, type: DocType, file: File) {
-    const { school } = await this.me();
+    const { school, actor } = await this.me();
+    const e = must(await this.sb.from("enrollments").select("status").eq("id", enrollmentId).single()) as Pick<Enrollment, "status">;
     const path = `${school.id}/${enrollmentId}/${type}-${Date.now()}-${file.name}`;
     must(await this.sb.storage.from(BUCKET).upload(path, file, { upsert: true }));
     must(
@@ -741,10 +756,119 @@ export class SupabaseStore implements DataStore {
         { onConflict: "enrollment_id,type" },
       ),
     );
+    must(
+      await this.sb.from("enrollment_history").insert({
+        school_id: school.id, enrollment_id: enrollmentId, from_status: e.status, to_status: e.status,
+        action: "upload_paper", reason: `${DOC_LABEL[type]} uploaded (${file.name})`,
+        actor_id: actor.user_id, actor_name: `${actor.name} (${actor.role})`,
+      }),
+    );
   }
 
   async signOut() {
     await this.sb.auth.signOut();
     this.session = null;
+  }
+
+  // ----- applicant portal -----
+
+  async getApplyInfo(schoolCode: string | null): Promise<ApplyInfo> {
+    // Security-definer function: anon may read the school name and open terms only.
+    const info = must(await this.sb.rpc("applicant_form_info", { p_school_code: schoolCode })) as ApplyInfo;
+    return info;
+  }
+
+  /** The form goes to the server (app/api/apply), which makes the account with the service role key. */
+  async submitPublicApplication(input: PublicApplicationInput): Promise<ApplicantCredentials> {
+    const body = new FormData();
+    body.set("school_code", input.school_code ?? "");
+    body.set("form", JSON.stringify(input.form));
+    for (const f of input.files) body.set(`file_${f.type}`, f.file);
+    const res = await fetch("/api/apply", { method: "POST", body });
+    const json = (await res.json().catch(() => ({ error: "The server did not answer. Please try again." }))) as
+      | ApplicantCredentials
+      | { error: string };
+    if (!res.ok || "error" in json) throw new Error("error" in json ? json.error : "Something went wrong. Please try again.");
+    return json;
+  }
+
+  async signIn(login: string, password: string) {
+    let email = login.trim().toLowerCase();
+    if (loginKind(email) !== "email") {
+      // Applicant number or student number -> the account's email (security-definer function).
+      const found = must(await this.sb.rpc("login_email", { p_login: login.trim() })) as string | null;
+      if (!found) throw new Error("We could not find that number. Check it and try again (e.g. APP-2026-00012).");
+      email = found;
+    }
+    const { error } = await this.sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      throw new Error(
+        /confirm/i.test(error.message)
+          ? "Please confirm your email first: open the message we sent you and tap the link."
+          : "Wrong login or password.",
+      );
+    }
+    this.session = null;
+  }
+
+  async getPortal(): Promise<PortalData | null> {
+    const session = await this.getSession();
+    if (!session) return null;
+    const uid = session.actor.user_id;
+    const [profile, students] = await Promise.all([
+      this.sb.from("profiles").select("must_change_password").eq("id", uid).maybeSingle(),
+      this.sb.from("students").select("id, applicant_no").eq("user_id", uid),
+    ]);
+    const mine = ((must(students) ?? []) as { id: string; applicant_no: string | null }[])[0];
+    let detail: EnrollmentDetail | null = null;
+    if (mine) {
+      const latest = must(
+        await this.sb.from("enrollments").select("id").eq("student_id", mine.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      ) as { id: string } | null;
+      if (latest) detail = await this.getDetail(latest.id);
+    }
+    return {
+      session,
+      must_change_password: !!(must(profile) as { must_change_password: boolean } | null)?.must_change_password,
+      applicant_no: mine?.applicant_no ?? null,
+      detail,
+    };
+  }
+
+  async updateApplicantDetails(enrollmentId: string, change: DetailsChange): Promise<SimpleResult> {
+    const { actor } = await this.me();
+    const detail = await this.getDetail(enrollmentId);
+    if (!detail) return { ok: false, error: "Enrollment not found." };
+    // Same rules first, for friendly messages; the database checks again and writes the history.
+    const plan = planDetailsUpdate({ role: actor.role, student: detail.student, enrollment: detail.enrollment }, change);
+    if (!plan.ok) return plan;
+    const res = await this.sb.rpc("applicant_update_details", {
+      p_enrollment: enrollmentId, p_student: plan.student, p_fields: plan.enrollment,
+    });
+    if (res.error) return { ok: false, error: res.error.message };
+    return { ok: true, message: res.data as string };
+  }
+
+  async createApplicantRequest(enrollmentId: string, type: RequestType, message: string): Promise<SimpleResult> {
+    const res = await this.sb.rpc("applicant_request_create", { p_enrollment: enrollmentId, p_type: type, p_message: message });
+    return res.error ? { ok: false, error: res.error.message } : { ok: true };
+  }
+
+  async answerApplicantRequest(requestId: string, reply: string, close: boolean): Promise<SimpleResult> {
+    const res = await this.sb.rpc("applicant_request_answer", { p_request: requestId, p_reply: reply, p_close: close });
+    return res.error ? { ok: false, error: res.error.message } : { ok: true };
+  }
+
+  async closeApplicantRequest(requestId: string): Promise<SimpleResult> {
+    const res = await this.sb.rpc("applicant_request_close", { p_request: requestId });
+    return res.error ? { ok: false, error: res.error.message } : { ok: true };
+  }
+
+  async changePassword(next: string) {
+    const problems = checkNewPassword(next, next);
+    if (problems.length) throw new Error(problems.join(" "));
+    const { error } = await this.sb.auth.updateUser({ password: next });
+    if (error) throw new Error(error.message);
+    must(await this.sb.rpc("applicant_password_changed"));
   }
 }

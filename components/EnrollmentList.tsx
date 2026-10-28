@@ -14,6 +14,7 @@ const WAITING_LABEL: Record<Role, string> = {
   student: "Your turn",
   parent: "Your turn",
   teacher: "",
+  applicant: "Your turn",
 };
 
 export default function EnrollmentList({
@@ -33,6 +34,8 @@ export default function EnrollmentList({
   const [status, setStatus] = useState<Status | "all" | "closed">("all");
   const [track, setTrack] = useState<Track | "all">("all");
   const [level, setLevel] = useState<string>("all");
+  // Registrar: only enrollments with applicant requests waiting for a reply.
+  const [requestsOnly, setRequestsOnly] = useState(false);
 
   const levels = useMemo(
     () => [...new Set(items.filter((i) => track === "all" || i.track === track).map((i) => i.level))].sort(),
@@ -40,6 +43,7 @@ export default function EnrollmentList({
   );
 
   const shown = items.filter((i) => {
+    if (requestsOnly && !(i.open_requests ?? 0)) return false;
     if (track !== "all" && i.track !== track) return false;
     if (level !== "all" && i.level !== level) return false;
     if (status === "closed") {
@@ -53,6 +57,7 @@ export default function EnrollmentList({
   });
 
   const waitingCount = items.filter((i) => i.waiting).length;
+  const requestCount = items.reduce((n, i) => n + (i.open_requests ?? 0), 0);
   const isFamily = role === "student" || role === "parent";
 
   return (
@@ -90,6 +95,13 @@ export default function EnrollmentList({
           ))}
           <Chip active={status === "closed"} onClick={() => setStatus("closed")}>Closed</Chip>
         </div>
+        {role === "registrar" && (
+          <div className="flex items-center gap-1.5" data-testid="requests-chip">
+            <Chip active={requestsOnly} onClick={() => setRequestsOnly(!requestsOnly)}>
+              💬 Applicant requests{requestCount > 0 ? ` (${requestCount})` : ""}
+            </Chip>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-1.5">
           <Chip active={track === "all"} onClick={() => { setTrack("all"); setLevel("all"); }}>Both</Chip>
           <Chip active={track === "college"} onClick={() => { setTrack("college"); setLevel("all"); }}>College</Chip>
@@ -137,6 +149,7 @@ export default function EnrollmentList({
                 {(i.waiting || (role === "cashier" && i.balance > 0)) && (
                   <span className="mt-1 block text-xs font-medium text-wait">
                     {i.waiting ? WAITING_LABEL[role] : `Balance ${peso(i.balance)}`}
+                    {(i.open_requests ?? 0) > 0 && ` · 💬 ${i.open_requests} ${i.open_requests === 1 ? "request" : "requests"}`}
                   </span>
                 )}
               </span>

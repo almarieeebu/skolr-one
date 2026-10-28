@@ -22,6 +22,29 @@ import type {
 import { planAction, type Mutations, type WithOverride } from "../enrollment/actions";
 import { canSee, isWaitingOn, sortForRole } from "../enrollment/queue";
 import { nextSeq } from "../enrollment/ids";
+import { DOC_LABEL } from "../enrollment/checks";
+import {
+  applicantAuthEmail,
+  checkNewPassword,
+  cleanPersonal,
+  cleanProgram,
+  formatApplicantNo,
+  generateTempPassword,
+  loginKind,
+  nextApplicantSeq,
+  planDetailsUpdate,
+  planRequestClose,
+  planRequestCreate,
+  planRequestReply,
+  roleAfterStatus,
+  validateConfirm,
+  validateDocuments,
+  validatePersonal,
+  validateProgram,
+  type ApplicantRequest,
+  type DetailsChange,
+  type RequestType,
+} from "../applicant";
 import {
   advanceOr,
   balance,
@@ -78,6 +101,11 @@ import {
   type EnrollmentListItem,
   type NewApplicationInput,
   type SessionInfo,
+  type ApplicantCredentials,
+  type ApplyInfo,
+  type PortalData,
+  type PublicApplicationInput,
+  type SimpleResult,
 } from "./store";
 
 interface DemoDb {
@@ -103,10 +131,17 @@ interface DemoDb {
   scoreItems: ScoreItem[];
   changeRequests: ChangeGradeRequest[];
   gradeHistory: GradeHistoryRow[];
+  applicantRequests: ApplicantRequest[];
+  /** Demo logins: user id -> password (demo only; Supabase keeps real hashed passwords). */
+  passwords: Record<string, string>;
 }
 
-const STORAGE_KEY = "alew-demo-db-v3";
+const STORAGE_KEY = "alew-demo-db-v4";
 const ROLE_KEY = "alew-demo-role";
+/** Main app: a signed-in user instead of the role switcher's sample user (e.g. a promoted applicant). */
+const USER_KEY = "alew-demo-user";
+/** Applicant portal: who is signed in there. */
+const PORTAL_USER_KEY = "alew-demo-portal-user";
 
 function freshDb(): DemoDb {
   // structuredClone so edits never touch the seed module.
@@ -133,7 +168,17 @@ function freshDb(): DemoDb {
     scoreItems: seed.scoreItems,
     changeRequests: seed.changeRequests,
     gradeHistory: seed.gradeHistory,
+    applicantRequests: seed.applicantRequests,
+    passwords: Object.fromEntries(seed.profiles.map((p) => [p.id, seed.passwordFor(p.id)])),
   });
+}
+
+function drop(key: string) {
+  try {
+    if (typeof window !== "undefined") window.localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
 }
 
 // Storage can be blocked (private mode, previews), so every access is guarded.
@@ -162,19 +207,36 @@ export class DemoStore implements DataStore, DemoControls {
   readonly mode = "demo" as const;
   private db: DemoDb;
   private role: Role;
+  /** Portal store: the signed-in portal user. Main app: an optional signed-in user (else the role switcher). */
+  private readonly portal: boolean;
+  private userId: string | null;
 
-  constructor() {
+  constructor(opts: { portal?: boolean } = {}) {
     this.db = load<DemoDb>(STORAGE_KEY) ?? freshDb();
     this.role = load<Role>(ROLE_KEY) ?? "registrar";
+    this.portal = !!opts.portal;
+    this.userId = load<string>(this.portal ? PORTAL_USER_KEY : USER_KEY);
+  }
+
+  /** Demo: open the applicant portal as this user (used by the header's "Applicant" choice). */
+  static openPortalAs(userId: string) {
+    save(PORTAL_USER_KEY, userId);
+  }
+  /** Demo: open the main app as this user (a promoted applicant going to the student app). */
+  static openMainAppAs(userId: string) {
+    save(USER_KEY, userId);
   }
 
   // ----- demo controls -----
   setRole(role: Role) {
     this.role = role;
     save(ROLE_KEY, role);
+    // Picking a role in the switcher leaves any signed-in demo user.
+    this.userId = null;
+    drop(USER_KEY);
   }
   getRole() {
-    return this.role;
+    return this.actor().role;
   }
   reset() {
     this.db = freshDb();
@@ -184,14 +246,30 @@ export class DemoStore implements DataStore, DemoControls {
     save(STORAGE_KEY, this.db);
   }
 
+  /** The user's role in this school (signed-in demo users). */
+  private roleOf(userId: string): Role | null {
+    return this.db.memberships.find((m) => m.user_id === userId && m.school_id === this.db.school.id)?.role ?? null;
+  }
+
   private actor() {
-    const userId = seed.demoUserByRole[this.role];
+    let userId: string;
+    let role: Role;
+    if (this.userId && this.roleOf(this.userId)) {
+      userId = this.userId;
+      role = this.roleOf(userId)!;
+    } else if (this.portal) {
+      throw new Error("Not signed in.");
+    } else {
+      role = this.role;
+      userId = seed.demoUserByRole[role];
+    }
     const p = this.db.profiles.find((x) => x.id === userId)!;
-    return { user_id: userId, role: this.role, name: p.full_name, email: p.email };
+    return { user_id: userId, role, name: p.full_name, email: p.email };
   }
 
   // ----- DataStore -----
-  async getSession(): Promise<SessionInfo> {
+  async getSession(): Promise<SessionInfo | null> {
+    if (this.portal && !(this.userId && this.roleOf(this.userId))) return null;
     const a = this.actor();
     return { actor: { user_id: a.user_id, role: a.role, name: a.name }, email: a.email, school: this.db.school };
   }
@@ -226,12 +304,15 @@ export class DemoStore implements DataStore, DemoControls {
         status: e.status,
         dean_approved: e.dean_approved,
         fix_note: e.fix_note,
-        balance: feePermissions(this.role).view ? Math.max(0, owed) : 0,
+        balance: feePermissions(this.actor().role).view ? Math.max(0, owed) : 0,
         updated_at: e.updated_at,
+        open_requests: this.actor().role === "registrar"
+          ? db.applicantRequests.filter((r) => r.enrollment_id === e.id && r.status === "open").length
+          : 0,
       };
-      return { ...base, waiting: isWaitingOn(this.role, base, settings) };
+      return { ...base, waiting: isWaitingOn(this.actor().role, base, settings) };
     });
-    return sortForRole(this.role, items, settings);
+    return sortForRole(this.actor().role, items, settings);
   }
 
   async getDetail(enrollmentId: string): Promise<EnrollmentDetail | null> {
@@ -247,7 +328,7 @@ export class DemoStore implements DataStore, DemoControls {
       takenCounts[l.offering_id] = (takenCounts[l.offering_id] ?? 0) + 1;
     }
     // Teachers see nothing about fees (the database does the same with RLS).
-    const fees = feePermissions(this.role).view;
+    const fees = feePermissions(this.actor().role).view;
     return structuredClone({
       enrollment: e,
       student: db.students.find((s) => s.id === e.student_id)!,
@@ -264,7 +345,15 @@ export class DemoStore implements DataStore, DemoControls {
         .filter((h) => h.enrollment_id === e.id)
         .sort((a, b) => a.created_at.localeCompare(b.created_at)),
       passed_codes: this.passedFor(e),
+      requests: this.seesRequests()
+        ? db.applicantRequests.filter((r) => r.enrollment_id === e.id).sort((a, b) => a.created_at.localeCompare(b.created_at))
+        : [],
     });
+  }
+
+  /** Requests are for the registrar and the applicant / student / parent (not cashier, dean, teacher). */
+  private seesRequests() {
+    return ["registrar", "applicant", "student", "parent"].includes(this.actor().role);
   }
 
   /** Subjects the student passed in OTHER enrollments (posted grades only). */
@@ -387,9 +476,19 @@ export class DemoStore implements DataStore, DemoControls {
     );
     if (result.ok) {
       this.apply(enrollmentId, detail.student.id, result.mutations);
+      this.promote(detail.student.id, result.mutations.enrollment.status ?? detail.enrollment.status);
       this.persist();
     }
     return result;
+  }
+
+  /** An applicant account becomes a student account once the student ID is made. */
+  private promote(studentId: string, status: EnrollmentDetail["enrollment"]["status"]) {
+    const s = this.db.students.find((x) => x.id === studentId);
+    if (!s?.user_id) return;
+    for (const m of this.db.memberships) {
+      if (m.user_id === s.user_id && m.school_id === this.db.school.id) m.role = roleAfterStatus(m.role, status);
+    }
   }
 
   /** Save the changes planned by planAction. */
@@ -445,7 +544,7 @@ export class DemoStore implements DataStore, DemoControls {
   }
 
   async saveFeeSetup(setup: FeeSetupDraft, subjects: SubjectFeeEdit[]) {
-    if (!feePermissions(this.role).setup) throw new Error("Only the registrar can change the fee setup.");
+    if (!feePermissions(this.actor().role).setup) throw new Error("Only the registrar can change the fee setup.");
     const problems = validateSetup(setup);
     if (problems.length) throw new Error(problems.join(" "));
     const now = new Date().toISOString();
@@ -467,7 +566,7 @@ export class DemoStore implements DataStore, DemoControls {
   }
 
   async saveOrSeries(s: Pick<OrSeries, "prefix" | "next_no" | "pad">) {
-    if (!feePermissions(this.role).setup) throw new Error("Only the registrar can change the OR series.");
+    if (!feePermissions(this.actor().role).setup) throw new Error("Only the registrar can change the OR series.");
     this.db.orSeries = { ...this.db.orSeries, ...s };
     this.persist();
   }
@@ -523,7 +622,7 @@ export class DemoStore implements DataStore, DemoControls {
   }
 
   async closeTerm(termId: string) {
-    if (!feePermissions(this.role).closeTerm) throw new Error("Only the registrar can close a term.");
+    if (!feePermissions(this.actor().role).closeTerm) throw new Error("Only the registrar can close a term.");
     const r = this.closePlan(termId);
     if ("error" in r) throw new Error(r.error);
     if ("error" in r.plan) throw new Error(r.plan.error);
@@ -777,7 +876,7 @@ export class DemoStore implements DataStore, DemoControls {
   }
 
   async saveGradeSettings(s: GradeSettings) {
-    if (!gradePermissions(this.role).settings) throw new Error("Only the registrar can change grade settings.");
+    if (!gradePermissions(this.actor().role).settings) throw new Error("Only the registrar can change grade settings.");
     const problems = validateGradeSettings(s);
     if (problems.length) throw new Error(problems.join(" "));
     this.db.gradeSettings = { ...s, school_id: this.db.school.id, updated_at: new Date().toISOString() };
@@ -788,6 +887,15 @@ export class DemoStore implements DataStore, DemoControls {
 
   async uploadDocument(enrollmentId: string, type: DocType, file: File) {
     const now = new Date().toISOString();
+    const e = this.db.enrollments.find((x) => x.id === enrollmentId);
+    if (!e || !this.visible(e)) throw new Error("Enrollment not found.");
+    const a = this.actor();
+    this.db.history.push({
+      id: uid(), school_id: this.db.school.id, enrollment_id: enrollmentId, from_status: e.status, to_status: e.status,
+      action: "upload_paper", reason: `${DOC_LABEL[type]} uploaded (${file.name})`,
+      actor_id: a.user_id, actor_name: `${a.name} (${a.role})`, created_at: now,
+    });
+    if (a.role === "applicant") e.updated_at = now;
     const existing = this.db.documents.find((d) => d.enrollment_id === enrollmentId && d.type === type);
     if (existing) {
       Object.assign(existing, { file_name: file.name, uploaded_at: now, checked: false });
@@ -801,6 +909,195 @@ export class DemoStore implements DataStore, DemoControls {
   }
 
   async signOut() {
-    /* nothing to do in demo mode */
+    // Main app: nothing to do (the role switcher stays). Portal: forget the signed-in user.
+    if (this.portal) {
+      this.userId = null;
+      drop(PORTAL_USER_KEY);
+    }
+  }
+
+  // ----- applicant portal -----
+
+  async getApplyInfo(schoolCode: string | null): Promise<ApplyInfo> {
+    const s = this.db.school;
+    if (schoolCode && schoolCode.toUpperCase() !== s.code.toUpperCase()) throw new Error(`No school with the code "${schoolCode}".`);
+    return {
+      school: { id: s.id, name: s.name, code: s.code, logo_url: s.logo_url },
+      terms: this.db.terms.filter((t) => t.is_open),
+    };
+  }
+
+  async submitPublicApplication(input: PublicApplicationInput): Promise<ApplicantCredentials> {
+    const { db } = this;
+    const f = input.form;
+    // Bots fill in the hidden field. (Demo mode has no rate limit.)
+    if (f.website.trim()) throw new Error("Something went wrong. Please try again.");
+    const info = await this.getApplyInfo(input.school_code);
+    const now = new Date().toISOString();
+    const problems = {
+      ...validatePersonal(f, now.slice(0, 10)),
+      ...validateProgram(f, info.terms),
+      ...validateDocuments(f, Object.fromEntries(input.files.map((x) => [x.type, x.file]))),
+      ...validateConfirm(f),
+    };
+    const first = Object.values(problems)[0];
+    if (first) throw new Error(first);
+
+    const term = info.terms.find((t) => t.id === f.term_id)!;
+    const year = term.school_year.slice(0, 4);
+    const applicantNo = formatApplicantNo(year, nextApplicantSeq(db.students.map((s) => s.applicant_no), year));
+    const personal = cleanPersonal(f);
+    // The account uses the applicant's email, unless it is already used by another account.
+    const taken = !!personal.email && db.profiles.some((p) => p.email.toLowerCase() === personal.email);
+    const authEmail = personal.email && !taken ? personal.email : applicantAuthEmail(applicantNo, db.school.code);
+    const fullName = [personal.first_name, personal.middle_name, personal.last_name].filter(Boolean).join(" ");
+    const password = generateTempPassword();
+
+    const userId = uid();
+    db.profiles.push({ id: userId, full_name: fullName, email: authEmail, must_change_password: true });
+    db.memberships.push({ id: uid(), user_id: userId, school_id: db.school.id, role: "applicant" });
+    db.passwords[userId] = password;
+
+    const student: Student = {
+      id: uid(), school_id: db.school.id, student_no: null, user_id: userId, guardian_user_id: null, completed_codes: [],
+      applicant_no: applicantNo, ...personal,
+    };
+    db.students.push(student);
+    const e: Enrollment = {
+      id: uid(), school_id: db.school.id, term_id: term.id, student_id: student.id, track: f.track, status: "applied",
+      ...cleanProgram(f), fix_note: null, dean_approved: false, overrides: [],
+      application: { source: "online", signed_name: f.signed_name.trim(), signed_at: now, signature: f.signature },
+      created_at: now, updated_at: now,
+    };
+    db.enrollments.push(e);
+    for (const x of input.files) {
+      db.documents.push({
+        id: uid(), school_id: db.school.id, enrollment_id: e.id, type: x.type,
+        file_name: x.file.name, file_path: null, checked: false, uploaded_at: now,
+      });
+    }
+    db.history.push({
+      id: uid(), school_id: db.school.id, enrollment_id: e.id, from_status: null, to_status: "applied",
+      action: "submit", reason: `Online application form (${applicantNo})`,
+      actor_id: userId, actor_name: `${fullName} (applicant)`, created_at: now,
+    });
+    this.persist();
+    return {
+      full_name: fullName,
+      school_name: db.school.name,
+      applicant_no: applicantNo,
+      password,
+      email: personal.email,
+      email_note: "demo",
+      papers_uploaded: true,
+      notice: taken ? "This email already has an account, so sign in with your applicant number." : null,
+    };
+  }
+
+  async signIn(login: string, password: string) {
+    const { db } = this;
+    const v = login.trim().toLowerCase();
+    const kind = loginKind(v);
+    const userId =
+      kind === "email"
+        ? db.profiles.find((p) => p.email.toLowerCase() === v)?.id
+        : db.students.find((s) => (kind === "applicant_no" ? s.applicant_no : s.student_no)?.toLowerCase() === v)?.user_id ?? undefined;
+    if (!userId || db.passwords[userId] !== password || !this.roleOf(userId)) {
+      throw new Error("Wrong login or password. Check your applicant number (e.g. APP-2026-00012) and password.");
+    }
+    this.userId = userId;
+    save(this.portal ? PORTAL_USER_KEY : USER_KEY, userId);
+  }
+
+  async getPortal(): Promise<PortalData | null> {
+    const session = await this.getSession();
+    if (!session) return null;
+    const { db } = this;
+    const mine = db.students.find((s) => s.user_id === session.actor.user_id);
+    const latest = mine
+      ? db.enrollments.filter((e) => e.student_id === mine.id).sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+      : undefined;
+    return {
+      session,
+      must_change_password: !!db.profiles.find((p) => p.id === session.actor.user_id)?.must_change_password,
+      applicant_no: mine?.applicant_no ?? null,
+      detail: latest ? await this.getDetail(latest.id) : null,
+    };
+  }
+
+  async updateApplicantDetails(enrollmentId: string, change: DetailsChange): Promise<SimpleResult> {
+    const detail = await this.getDetail(enrollmentId);
+    if (!detail) return { ok: false, error: "Enrollment not found." };
+    const a = this.actor();
+    const plan = planDetailsUpdate({ role: a.role, student: detail.student, enrollment: detail.enrollment }, change);
+    if (!plan.ok) return plan;
+    const now = new Date().toISOString();
+    const { db } = this;
+    Object.assign(db.students.find((s) => s.id === detail.student.id)!, plan.student);
+    const e = db.enrollments.find((x) => x.id === enrollmentId)!;
+    Object.assign(e, plan.enrollment, { updated_at: now });
+    db.history.push({
+      id: uid(), school_id: db.school.id, enrollment_id: enrollmentId, from_status: e.status, to_status: e.status,
+      action: "update_details", reason: plan.summary, actor_id: a.user_id, actor_name: `${a.name} (${a.role})`, created_at: now,
+    });
+    this.persist();
+    return { ok: true, message: plan.summary };
+  }
+
+  async createApplicantRequest(enrollmentId: string, type: RequestType, message: string): Promise<SimpleResult> {
+    const detail = await this.getDetail(enrollmentId);
+    if (!detail) return { ok: false, error: "Enrollment not found." };
+    const a = this.actor();
+    const now = new Date().toISOString();
+    const plan = planRequestCreate({ role: a.role, status: detail.enrollment.status, requests: detail.requests ?? [], now }, { type, message });
+    if (!plan.ok) return plan;
+    this.db.applicantRequests.push({
+      ...plan.value, id: uid(), school_id: this.db.school.id, enrollment_id: enrollmentId,
+      created_by: a.user_id, created_by_name: `${a.name} (${a.role})`,
+    });
+    this.db.enrollments.find((x) => x.id === enrollmentId)!.updated_at = now;
+    this.persist();
+    return { ok: true };
+  }
+
+  private findRequest(requestId: string) {
+    const r = this.db.applicantRequests.find((x) => x.id === requestId);
+    const e = r && this.db.enrollments.find((x) => x.id === r.enrollment_id);
+    return r && e && this.visible(e) && this.seesRequests() ? { r, e } : null;
+  }
+
+  async answerApplicantRequest(requestId: string, reply: string, close: boolean): Promise<SimpleResult> {
+    const found = this.findRequest(requestId);
+    if (!found) return { ok: false, error: "Request not found." };
+    const a = this.actor();
+    const plan = planRequestReply(
+      { role: a.role, request: found.r, now: new Date().toISOString(), by: a.user_id, byName: `${a.name} (${a.role})` },
+      { reply, close },
+    );
+    if (!plan.ok) return plan;
+    Object.assign(found.r, plan.value);
+    this.persist();
+    return { ok: true };
+  }
+
+  async closeApplicantRequest(requestId: string): Promise<SimpleResult> {
+    const found = this.findRequest(requestId);
+    if (!found) return { ok: false, error: "Request not found." };
+    const a = this.actor();
+    const plan = planRequestClose({ role: a.role, isOwner: a.role !== "registrar", request: found.r, now: new Date().toISOString() });
+    if (!plan.ok) return plan;
+    Object.assign(found.r, plan.value);
+    this.persist();
+    return { ok: true };
+  }
+
+  async changePassword(next: string) {
+    const a = this.actor();
+    const problems = checkNewPassword(next, next, this.db.passwords[a.user_id]);
+    if (problems.length) throw new Error(problems.join(" "));
+    this.db.passwords[a.user_id] = next;
+    const p = this.db.profiles.find((x) => x.id === a.user_id);
+    if (p) p.must_change_password = false;
+    this.persist();
   }
 }

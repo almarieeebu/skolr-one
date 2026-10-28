@@ -60,6 +60,7 @@ import {
   type ScoreItem,
   type SpecialMark,
 } from "../grades";
+import type { ApplicantRequest } from "../applicant/types";
 
 /** Stable, valid UUIDs so the SQL seed and the demo share ids. */
 const id = (group: string, n: number) =>
@@ -83,9 +84,20 @@ export const profiles: Profile[] = [
   { id: id("a", 8), full_name: "Grace Lim", email: "teacher.math@sample.edu.ph" },
   { id: id("a", 9), full_name: "Joel Santos", email: "teacher.pe@sample.edu.ph" },
   { id: id("a", 10), full_name: "Mila Cruz", email: "teacher.kinder@sample.edu.ph" },
+  // Applicants from the online form (/apply). Bianca gave no email, so her login
+  // is her applicant number (auth email app-2026-00001@applicants.sa.local) and
+  // she still has her temporary password. Kevin gave an email and changed his password.
+  { id: id("a", 11), full_name: "Bianca Flores", email: "app-2026-00001@applicants.sa.local", must_change_password: true },
+  { id: id("a", 12), full_name: "Kevin Navarro", email: "kevin.navarro@sample.edu.ph", must_change_password: false },
 ];
 
-const [REGISTRAR, CASHIER, TEACHER, JUAN, PARENT, DEAN, T_GE, T_MATH, T_PE, T_KINDER] = profiles.map((p) => p.id);
+const [REGISTRAR, CASHIER, TEACHER, JUAN, PARENT, DEAN, T_GE, T_MATH, T_PE, T_KINDER, BIANCA, KEVIN] = profiles.map((p) => p.id);
+
+/** Login passwords that are not the shared demo password (temporary applicant passwords). */
+export const passwordOverrides: Record<string, string> = {
+  [BIANCA]: "mango-river-sunny-27",
+};
+export const passwordFor = (userId: string) => passwordOverrides[userId] ?? DEMO_PASSWORD;
 
 /** One demo login per role (used by the demo role switcher). */
 export const demoUserByRole: Record<Role, string> = {
@@ -95,6 +107,7 @@ export const demoUserByRole: Record<Role, string> = {
   student: JUAN,
   parent: PARENT,
   dean: DEAN,
+  applicant: KEVIN,
 };
 
 export const school: School = {
@@ -122,6 +135,8 @@ export const memberships: Membership[] = (
     [T_MATH, "teacher"],
     [T_PE, "teacher"],
     [T_KINDER, "teacher"],
+    [BIANCA, "applicant"],
+    [KEVIN, "applicant"],
   ] as [string, Role][]
 ).map(([user_id, role], i) => ({ id: id("ab", i + 1), user_id, school_id: SCHOOL_ID, role }));
 
@@ -276,6 +291,8 @@ interface Sample {
   payments?: [amount: number, or_no: string, mode?: PaymentMode, reference?: string][];
   discounts?: Pick<Discount, "name" | "scope" | "target" | "kind" | "value" | "reason">[];
   note?: string;
+  /** Registrar's "needs fix" note (the application stays at Applied). */
+  fixNote?: string;
   term?: string;
   day?: number;
 }
@@ -373,6 +390,34 @@ const samples: Sample[] = [
     load: ["K-ILANG"],
     payments: [[8000, "100214"]],
   },
+  // Online applicants with temporary accounts (Applicant Portal).
+  {
+    student: {
+      first_name: "Bianca", middle_name: "Ramos", last_name: "Flores", birth_date: "2008-05-21", sex: "F", user_id: BIANCA,
+      applicant_no: "APP-2026-00001", civil_status: "Single", citizenship: "Filipino", contact_no: "09171234501",
+      email: null, address: "45 Rizal Ave, Brgy. San Roque, Antipolo City, Rizal", guardian_name: "Marites Flores", guardian_contact: "09181234502",
+    },
+    enrollment: {
+      track: "college", status: "applied", level: "1st Year", course: "BSBA", student_type: "new",
+      application: { source: "online", signed_name: "Bianca Ramos Flores", signed_at: at(17, 7), signature: null },
+    },
+    docs: ["form_138", "psa_birth_cert", "photo"],
+    day: 17,
+  },
+  {
+    student: {
+      first_name: "Kevin", middle_name: "Uy", last_name: "Navarro", birth_date: "2007-10-03", sex: "M", user_id: KEVIN,
+      applicant_no: "APP-2026-00002", civil_status: "Single", citizenship: "Filipino", contact_no: "09171234503",
+      email: "kevin.navarro@sample.edu.ph", address: "8 Sampaguita St, Brgy. Malinta, Valenzuela City", guardian_name: "Edwin Navarro", guardian_contact: "09181234504",
+    },
+    enrollment: {
+      track: "college", status: "applied", level: "1st Year", course: "BSCS", student_type: "new",
+      application: { source: "online", signed_name: "Kevin Uy Navarro", signed_at: at(15, 7), signature: null },
+    },
+    docs: ["form_138", "psa_birth_cert", "photo"],
+    fixNote: "Your Form 138 photo is blurry. Please upload a clearer copy.",
+    day: 15,
+  },
 ];
 
 export const students: Student[] = [];
@@ -436,6 +481,14 @@ samples.forEach((s, i) => {
     user_id: null,
     guardian_user_id: null,
     completed_codes: [],
+    applicant_no: null,
+    civil_status: null,
+    citizenship: null,
+    contact_no: null,
+    email: null,
+    address: null,
+    guardian_name: null,
+    guardian_contact: null,
     ...s.student,
   };
   if (!reuse) students.push(student);
@@ -459,9 +512,11 @@ samples.forEach((s, i) => {
     fix_note: null,
     dean_approved: false,
     overrides: [],
+    application: null,
     created_at: at(day),
     updated_at: at(day, 15),
     ...s.enrollment,
+    ...(s.fixNote ? { fix_note: s.fixNote } : {}),
   };
   enrollments.push(e);
 
@@ -489,6 +544,13 @@ samples.forEach((s, i) => {
     reason: returning ? "Returning student - starts at the load step" : null,
     actor_id: submitter, actor_name: nameOf(submitter), created_at: at(day, 8),
   });
+  if (s.fixNote) {
+    history.push({
+      id: id("4f", ++histN), school_id: SCHOOL_ID, enrollment_id: enrollmentId,
+      from_status: "applied", to_status: "applied", action: "needs_fix", reason: s.fixNote,
+      actor_id: REGISTRAR, actor_name: nameOf(REGISTRAR), created_at: at(day, 10),
+    });
+  }
   if (e.status === "rejected") {
     history.push({
       id: id("4f", ++histN), school_id: SCHOOL_ID, enrollment_id: enrollmentId,
@@ -714,3 +776,24 @@ const collegeSubject = (code: string, termId: string, enrollmentId: string, stat
     rows: [[enrollmentOf("Lucas", TERM_K12).id, { domains: { SE: "C", PM: "C", CR: "D", MA: "D", EN: "C", LL: "D" } }]],
   });
 }
+
+// ---------- applicant portal ----------
+// Kevin (needs fix) asked a question and the registrar answered it.
+
+/** Last applicant number used per school and year (applicant_counters). */
+export const applicantCounters = [{ school_id: SCHOOL_ID, year: 2026, last_no: 2 }];
+
+export const applicantRequests: ApplicantRequest[] = (() => {
+  const kevin = enrollments.find((e) => students.find((x) => x.id === e.student_id)?.user_id === KEVIN)!;
+  return [
+    {
+      id: id("a9", 1), school_id: SCHOOL_ID, enrollment_id: kevin.id, type: "question",
+      message: "Good day! Can I still change my course from BSCS to BSIT?",
+      status: "answered",
+      reply: "Yes. You can change it in Update details while your application is not yet checked.",
+      created_by: KEVIN, created_by_name: "Kevin Navarro (applicant)",
+      replied_by: REGISTRAR, replied_by_name: nameOf(REGISTRAR),
+      created_at: at(15, 11), replied_at: at(16, 9), closed_at: null,
+    },
+  ];
+})();

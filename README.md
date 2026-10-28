@@ -32,7 +32,8 @@ Everything happens on **one page**:
 
 ### Roles
 
-Registrar, Cashier, Teacher (types grades for their classes, otherwise view only), Student, Parent, and Dean (off by default).
+Registrar, Cashier, Teacher (types grades for their classes, otherwise view only), Student, Parent, Dean (off by default),
+and Applicant (a temporary account from the online form; see *Applicant Portal*).
 
 ---
 
@@ -178,6 +179,69 @@ Students and parents can read posted grades only.
 
 ---
 
+## Applicant Portal
+
+New students (or parents, for K to 12) can enroll **online without an account**, then follow their application.
+
+**1. The enrollment form: `/apply`** (or `/apply/SA` with the school code; `/apply` works when there is only one school)
+
+Four short pages, made for phones:
+
+| Page | What it asks |
+|------|--------------|
+| 1 Personal | Last name\*, first name\*, middle name, birthdate\*, gender\*, civil status, citizenship, mobile number\* (09XXXXXXXXX), email (strongly suggested), complete address\*, guardian name\* and number\* |
+| 2 Program | College or K to 12. College: school year\*, semester\*, course\*, year level\*, student type\*. K to 12: grade level\*, strand (SHS), LRN, ESC / voucher, mother tongue, IP group, 4Ps, tuition plan |
+| 3 Papers | Form 138, PSA birth certificate, student picture\* (transferees: honorable dismissal and TOR). Only the picture is needed now; the rest can follow |
+| 4 Confirm | Summary, "I certify that all the information provided is true and correct"\*, typed full name as signature\*, optional drawn signature, today's date |
+
+When it is sent, the application is at step 1 (**Applied**) and a **temporary applicant account** is made:
+
+- Username: an **applicant number** like `APP-2026-00012` (one sequence per school and year).
+- Password: three words and two digits, like `mango-river-sunny-27`. It shows **once**, with a *Copy* button
+  and a "Save or screenshot this" note. The applicant must pick a new password on the first sign-in.
+- Anti-spam: a hidden "honeypot" field, and (Supabase mode) at most 20 forms per network per hour and 3 per email per day.
+
+**2. The portal: `/portal`** (its own simple page). Sign in with the applicant number or the email, and the password.
+
+- **Progress:** the 6 steps with the date of each step, and plain words: "We are checking your papers",
+  "Needs a fix: *(the registrar's note)*", "Accepted! Your student number is …", plus what to do next.
+- **Update details:** the applicant can change personal and program details and re-upload papers **only while
+  the application is Applied** (this includes "Needs fix"). After the registrar accepts the papers, it is locked
+  and the page says why. Every change is written to the history ("Contact number: 0917… → 0920…").
+- **Messages to the registrar:** Follow up, Change request or Question. The registrar sees them in the main app
+  (the **💬 Applicant requests** filter chip, a **Requests** section in the student card, and a reply box in the
+  right column) and replies, or replies and closes. The applicant sees the reply in the portal.
+- **Account:** change password, sign out.
+- When the registrar presses **Assign student ID**, the applicant account becomes a normal **student** account
+  (same login and password; the student number works as a login too). The portal says "You are now a student"
+  and links to the main app. `/login` also accepts an applicant number or a student number.
+
+**Demo mode:** everything works in the browser. `/apply` makes the application and the account in the demo data.
+Sample logins for `/portal`: `APP-2026-00001` / `mango-river-sunny-27` (Bianca, waiting, must change the password)
+and `APP-2026-00002` / `password123` (Kevin, needs a fix, with an answered question). In the main app, pick
+**Applicant** in the *Viewing as* dropdown to open Kevin's portal.
+
+**In Supabase** (`supabase/migrations/0004_applicant_portal.sql`):
+
+- New role `applicant`, new paper type `photo`, applicant columns on `students`, the signed certification on
+  `enrollments.application`, `profiles.must_change_password`, and the table `applicant_requests` (applicants see
+  their own; the registrar sees all of the school; rows are written only by functions).
+- `applicant_submit` (callable without login) checks every field again, applies the rate limit and makes the
+  application. The server (`app/api/apply/route.ts`) then makes the login and calls `applicant_link_account`
+  with a one-time token. `applicant_update_details` (only while Applied), `applicant_request_create /
+  _answer / _close`, `login_email` (number → login email) and `applicant_password_changed` do the rest.
+  A trigger turns the applicant into a student when the status becomes Student ID made.
+
+**`SUPABASE_SERVICE_ROLE_KEY` (optional, server only):** put it in `.env.local` **without** `NEXT_PUBLIC_`.
+It is only read by `app/api/apply/route.ts` on the server and must never reach the browser, because it skips
+every security rule. With it, the server makes the applicant's login directly (no email needed) and uploads the
+papers. **Without it**, the form asks for an email, Supabase sends a "confirm your email" message (signUp), and
+the applicant confirms before signing in; papers are then uploaded in the portal (unless email confirmation is
+off in your project). No other email service is used: the password is **not** emailed, it is only shown on the
+success screen.
+
+---
+
 ## Run it in demo mode (no setup)
 
 ```bash
@@ -205,6 +269,7 @@ an ESC/SHS voucher (Sofia) and a student with a carried balance from last year (
    - `supabase/migrations/0001_init.sql` (tables, enums, security rules, storage bucket)
    - `supabase/migrations/0002_fees.sql` (fees: setups, discounts, payments, ledger, OR series, closing)
    - `supabase/migrations/0003_grades.sql` (grades: sheets, scores, settings, change requests, history)
+   - `supabase/migrations/0004_applicant_portal.sql` (online form, applicant accounts, requests)
    - `supabase/seed.sql` (Sample Academy and demo logins)
 
    Ran it before, or it stopped half way (error like `type "app_role" already exists`)? Run `supabase/reset.sql` first, then the files above again. It removes only the skolr-one tables and the demo logins.
@@ -216,6 +281,8 @@ an ESC/SHS voucher (Sofia) and a student with a carried balance from last year (
    ```
    NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
    NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+   # optional, server only (see Applicant Portal):
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
    ```
 4. `npm run dev` and sign in. Seed logins (password `password123`):
    `registrar@sample.edu.ph`, `cashier@sample.edu.ph`, `teacher@sample.edu.ph`,
@@ -236,12 +303,13 @@ The registrar can add these in the Supabase table editor for now.
 | `npm run seed:sql` | Rebuild `supabase/seed.sql` from `lib/data/seed.ts` |
 | `node scripts/demo-walkthrough.cjs` | Click through the whole flow with Playwright and save screenshots (needs Playwright installed and the dev server running; set `BASE_URL`) |
 | `node scripts/fees-walkthrough.cjs` | Same for the fees flow: setup, load, payments, scholarship, statement, term closing (saves `screenshots/fees-*.png`) |
+| `node scripts/applicant-walkthrough.cjs` | Same for the Applicant Portal: online form, credentials, portal, registrar reply and needs fix, re-upload, student ID (saves `screenshots/applicant-*.png`) |
 | `node scripts/grades-walkthrough.cjs` | Same for grades: encode, submit, return, approve, deadline, change request, report card, phone view (saves `screenshots/grades-*.png`) |
 
 ## How the code is laid out
 
 ```
-app/                 the one page (/) and /login
+app/                 the one page (/), /login, /apply (public form), /portal, /api/apply
 components/          list, student card, action box, side panels
 lib/enrollment/      business rules, pure TypeScript + tests
   status.ts          steps and allowed status changes
@@ -263,6 +331,11 @@ lib/grades/          grade rules, pure TypeScript + tests
   report.ts          grade slip / report card rows, passed subjects for prerequisites
   settings.ts        grade settings, deadlines
   roles.ts           who may do what with grades
+lib/applicant/       applicant portal rules, pure TypeScript + tests
+  ids.ts             applicant numbers (APP-2026-00012) and login names
+  password.ts        temporary passwords (3 words + 2 digits), new password checks
+  validate.ts        the 4 form pages, PH mobile numbers
+  rules.ts           edit allowed by status, requests open → answered → closed, promotion, portal text
 lib/data/
   store.ts           the ONE data interface the UI uses
   demo-store.ts      in-browser data (demo mode)
@@ -276,6 +349,10 @@ Both stores use the same rules: `planAction()` decides what should change, then 
 store saves it. So demo mode and Supabase mode behave the same.
 
 ## Known limits of this MVP
+
+- Applicant Portal: the temporary password is shown on screen only (not emailed). Signing in with a number
+  uses `login_email`, which tells anyone who knows an applicant or student number the email of that login.
+  The rate limit trusts the IP address the server passes in. A drawn signature is kept in the database (PNG).
 
 - In Supabase mode the non-fee saves for one action (load, status, history) are still separate
   requests. All money is safe: it is posted by database functions in one transaction each.

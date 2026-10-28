@@ -8,12 +8,9 @@ import { fullName } from "@/lib/data/store";
 import type { DocType, Student, StudentType, Term, Track, TuitionPlan } from "@/lib/enrollment/types";
 import { DOC_LABEL, isSeniorHigh, requiredDocs } from "@/lib/enrollment/checks";
 import { PLAN_INFO } from "@/lib/fees";
+import { COURSES, GRADES, STRANDS, YEARS } from "@/lib/enrollment/options";
 import { Button, Field, inputClass } from "./ui";
 
-const COURSES = ["BSIT", "BSCS", "BSBA", "BSEd", "BSN"];
-const YEARS = ["1st Year", "2nd Year", "3rd Year", "4th Year"];
-const GRADES = ["Kindergarten", ...Array.from({ length: 12 }, (_, i) => `Grade ${i + 1}`)];
-const STRANDS = ["STEM", "ABM", "HUMSS", "GAS", "TVL"];
 
 const empty = (track: Track): Omit<NewApplicationInput, "term_id" | "files"> => ({
   track,

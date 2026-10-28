@@ -2,11 +2,13 @@
 // so the demo store and the Supabase store can use the same shapes.
 
 import type { Discount, FeeSetup, LedgerEntry, Payment } from "../fees/types";
+import type { ApplicantRequest } from "../applicant/types";
 export type { Payment } from "../fees/types";
 
 export type Track = "college" | "k12";
 
-export type Role = "registrar" | "cashier" | "teacher" | "student" | "parent" | "dean";
+/** "applicant": a temporary account made by the public enrollment form (/apply). It becomes "student" when the registrar assigns a student ID. */
+export type Role = "registrar" | "cashier" | "teacher" | "student" | "parent" | "dean" | "applicant";
 
 /** The six main steps, plus the two "end" states. */
 export type Status =
@@ -23,7 +25,7 @@ export type StudentType = "new" | "transferee" | "returnee" | "continuing";
 
 export type TuitionPlan = "annual" | "quarterly" | "monthly";
 
-export type DocType = "psa_birth_cert" | "form_138" | "honorable_dismissal" | "tor";
+export type DocType = "psa_birth_cert" | "form_138" | "honorable_dismissal" | "tor" | "photo";
 
 /** Fees (rates, misc items, plans, downpayment) live in fee setups, not here. */
 export interface SchoolSettings {
@@ -54,6 +56,8 @@ export interface Profile {
   id: string; // = auth user id
   full_name: string;
   email: string;
+  /** Temporary applicant passwords must be changed on the first sign-in. */
+  must_change_password?: boolean;
 }
 
 export interface Membership {
@@ -80,6 +84,26 @@ export interface Student {
    * subjects). Passed subjects come from posted grades (see passed_codes).
    */
   completed_codes: string[];
+  // Filled in by the online enrollment form (/apply). Optional for older rows.
+  /** Temporary applicant number, e.g. APP-2026-00012 (the applicant's login name). */
+  applicant_no?: string | null;
+  civil_status?: string | null;
+  citizenship?: string | null;
+  /** Personal mobile number, 09XXXXXXXXX. */
+  contact_no?: string | null;
+  email?: string | null;
+  address?: string | null;
+  guardian_name?: string | null;
+  guardian_contact?: string | null;
+}
+
+/** The signed certification of an online application. */
+export interface ApplicationMeta {
+  source: "online";
+  signed_name: string;
+  signed_at: string;
+  /** Drawn signature as a PNG data URL (optional). */
+  signature: string | null;
 }
 
 export interface ParentLink {
@@ -116,6 +140,8 @@ export interface Enrollment {
   fix_note: string | null;
   dean_approved: boolean;
   overrides: OverrideRecord[];
+  /** Set when the application came from the online form. */
+  application?: ApplicationMeta | null;
   created_at: string;
   updated_at: string;
 }
@@ -170,7 +196,8 @@ export interface HistoryRow {
   to_status: Status;
   action: string;
   reason: string | null;
-  actor_id: string;
+  /** Null only for an online application sent before the applicant had an account. */
+  actor_id: string | null;
   actor_name: string | null;
   created_at: string;
 }
@@ -195,6 +222,8 @@ export interface EnrollmentDetail {
   history: HistoryRow[];
   /** Subject codes passed in other terms (posted grades), for prerequisites. */
   passed_codes?: string[];
+  /** Follow-up requests from the applicant (registrar and the applicant see them). */
+  requests?: ApplicantRequest[];
 }
 
 export interface Actor {

@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import type { ClassListItem, DataStore, EnrollmentListItem, SessionInfo } from "@/lib/data/store";
 import type { EnrollmentDetail, Role } from "@/lib/enrollment/types";
 import { DemoStore } from "@/lib/data/demo-store";
+import { demoUserByRole } from "@/lib/data/seed";
 import { SupabaseStore } from "@/lib/data/supabase-store";
 import Header from "./Header";
 import EnrollmentList from "./EnrollmentList";
@@ -56,6 +57,11 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
           router.replace("/login");
           return;
         }
+        // Applicants use their own portal.
+        if (s.actor.role === "applicant") {
+          router.replace("/portal");
+          return;
+        }
         setSession(s);
         const [list, cls] = await Promise.all([store.listEnrollments(), store.listClasses()]);
         setItems(list);
@@ -92,6 +98,12 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
   };
 
   const switchRole = async (role: Role) => {
+    if (role === "applicant") {
+      // Demo: the applicant portal, signed in as the sample applicant.
+      DemoStore.openPortalAs(demoUserByRole.applicant);
+      router.push("/portal");
+      return;
+    }
     if (store instanceof DemoStore) {
       store.setRole(role);
       // Teachers start on their classes; everyone else on enrollments.

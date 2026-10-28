@@ -24,6 +24,7 @@ import {
 } from "@/lib/fees";
 import { Button, Field, Warnings, inputClass } from "./ui";
 import { fmtDay, summaryOf } from "./fees-ui";
+import { REQUEST_TYPE_LABEL } from "@/lib/applicant";
 
 /** Friendly "what happens next" text when this role has nothing to press. */
 function waitingText(role: Role, status: Status, useDean: boolean, deanDone: boolean): string {
@@ -134,6 +135,28 @@ export default function ActionBox({
       }
     } catch (err) {
       setPending({ input, warnings: [], canOverride: false, error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Registrar: reply to the applicant's follow-up requests.
+  const replyable = role === "registrar" ? (detail.requests ?? []).filter((r) => r.status !== "closed") : [];
+  const [reqId, setReqId] = useState(replyable.find((r) => r.status === "open")?.id ?? replyable[0]?.id ?? "");
+  const [reply, setReply] = useState("");
+  const [reqError, setReqError] = useState<string | null>(null);
+  const picked = replyable.find((r) => r.id === reqId);
+  const sendReply = async (close: boolean) => {
+    setBusy(true);
+    setReqError(null);
+    try {
+      const r = await store.answerApplicantRequest(reqId, reply, close);
+      if (r.ok) {
+        setReply("");
+        onChanged(close ? "Reply sent and request closed." : "Reply sent to the applicant.");
+      } else setReqError(r.error);
+    } catch (err) {
+      setReqError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -270,6 +293,51 @@ export default function ActionBox({
           }
         })}
       </div>
+
+      {picked && (
+        <form
+          className="space-y-2 border-t border-line pt-3"
+          data-testid="reply-box"
+          onSubmit={(ev) => {
+            ev.preventDefault();
+            void sendReply(false);
+          }}
+        >
+          <p className="text-xs font-medium text-muted">
+            Applicant requests · {replyable.filter((r) => r.status === "open").length} waiting
+          </p>
+          {replyable.length > 1 && (
+            <select data-testid="reply-pick" className={inputClass} value={reqId} onChange={(ev) => setReqId(ev.target.value)}>
+              {replyable.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.status === "open" ? "● " : ""}{REQUEST_TYPE_LABEL[r.type]}: {r.message.slice(0, 40)}
+                </option>
+              ))}
+            </select>
+          )}
+          <blockquote className="rounded-lg bg-paper px-3 py-2 text-sm">
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted">{REQUEST_TYPE_LABEL[picked.type]}</span>
+            {picked.message}
+          </blockquote>
+          <textarea
+            data-testid="reply-text"
+            className={inputClass}
+            rows={3}
+            value={reply}
+            onChange={(ev) => setReply(ev.target.value)}
+            placeholder="Type your reply to the applicant…"
+          />
+          {reqError && <p className="text-sm text-danger">{reqError}</p>}
+          <div className="flex gap-2">
+            <Button type="submit" disabled={busy || !reply.trim()} className="flex-1" data-testid="reply-send">
+              Send reply
+            </Button>
+            <Button variant="secondary" disabled={busy || !reply.trim()} onClick={() => void sendReply(true)} data-testid="reply-close">
+              Reply &amp; close
+            </Button>
+          </div>
+        </form>
+      )}
 
       {((perms.applyDiscount && fees.charges > 0) || voidable.length > 0) && assessed && !detail.term.closed_at && !["rejected", "withdrawn"].includes(e.status) && (
         <div className="space-y-2 border-t border-line pt-3" data-testid="fee-actions">
