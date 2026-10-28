@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { EnrollmentListItem } from "@/lib/data/store";
 import type { Role, Status, Track } from "@/lib/enrollment/types";
 import { STEPS } from "@/lib/enrollment/status";
-import { peso } from "@/lib/enrollment/fees";
+import { peso } from "@/lib/fees";
 import { Button, Chip, StatusBadge, inputClass } from "./ui";
 
 const WAITING_LABEL: Record<Role, string> = {
@@ -133,6 +133,7 @@ export default function EnrollmentList({
                   {" · "}
                   {i.student_no ?? "no ID yet"}
                 </span>
+                <span className="block truncate text-[11px] text-muted/80">{i.term_label}</span>
                 {(i.waiting || (role === "cashier" && i.balance > 0)) && (
                   <span className="mt-1 block text-xs font-medium text-wait">
                     {i.waiting ? WAITING_LABEL[role] : `Balance ${peso(i.balance)}`}

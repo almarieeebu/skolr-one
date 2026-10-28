@@ -21,7 +21,7 @@ function lit(v: unknown): string {
 function insert(table: string, rows: Row[]): string {
   if (!rows.length) return "";
   const cols = Object.keys(rows[0]);
-  const jsonCols = new Set(["overrides", "settings"]);
+  const jsonCols = new Set(["overrides", "settings", "misc_items", "exam_periods", "plans"]);
   const cell = (c: string, v: unknown) => (jsonCols.has(c) ? `${lit(JSON.stringify(v))}::jsonb` : lit(v));
   const values = rows.map((r) => `  (${cols.map((c) => cell(c, r[c])).join(", ")})`).join(",\n");
   return `insert into ${table} (${cols.join(", ")}) values\n${values};\n\n`;
@@ -61,8 +61,12 @@ sql += insert("offerings", seed.offerings as unknown as Row[]);
 sql += insert("enrollments", seed.enrollments as unknown as Row[]);
 sql += insert("documents", seed.documents as unknown as Row[]);
 sql += insert("enrollment_loads", seed.enrollmentLoads as unknown as Row[]);
-sql += insert("fee_lines", seed.feeLines as unknown as Row[]);
+sql += insert("fee_setups", seed.feeSetups as unknown as Row[]);
+sql += insert("discounts", seed.discounts as unknown as Row[]);
 sql += insert("payments", seed.payments as unknown as Row[]);
+// Ledger rows in posting order (seq follows insert order).
+sql += insert("ledger_entries", seed.ledger as unknown as Row[]);
+sql += insert("or_series", [seed.orSeries as unknown as Row]);
 sql += insert("enrollment_history", seed.history as unknown as Row[]);
 
 const out = path.join(__dirname, "..", "supabase", "seed.sql");

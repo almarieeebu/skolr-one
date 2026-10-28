@@ -34,3 +34,13 @@ body {
   outline: 2px solid var(--color-brand);
   outline-offset: 2px;
 }
+
+/* Printing: only the statement of account shows (see components/Statement.tsx). */
+@media print {
+  body {
+    background: #fff;
+  }
+  @page {
+    margin: 12mm;
+  }
+}

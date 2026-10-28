@@ -6,9 +6,11 @@ import { fullName, termLabel } from "@/lib/data/store";
 import type { DocType, EnrollmentDetail } from "@/lib/enrollment/types";
 import { STATUS_LABEL, STEPS, isFinal, stepIndex } from "@/lib/enrollment/status";
 import { DOC_LABEL, formatSchedule, requiredDocs, totalUnits } from "@/lib/enrollment/checks";
-import { PLAN_INFO, peso, requiredDownpayment, totalPaid } from "@/lib/enrollment/fees";
+import { PLAN_INFO, feePermissions, peso } from "@/lib/fees";
 import { canUploadPapers } from "@/lib/enrollment/actions";
 import { Section, StatusBadge } from "./ui";
+import FeesSection from "./FeesSection";
+import { summaryOf } from "./fees-ui";
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" }) : "—";
@@ -80,8 +82,8 @@ export default function StudentCard({
   const { enrollment: e, student: s, term } = detail;
   const settings = session.school.settings;
   const picked = detail.offerings.filter((o) => detail.loads.some((l) => l.offering_id === o.id));
-  const total = detail.feeLines.reduce((a, f) => a + f.amount, 0);
-  const paid = totalPaid(detail.payments);
+  const showFees = feePermissions(session.actor.role).view;
+  const fees = summaryOf(detail);
   const isCollege = e.track === "college";
 
   return (
@@ -196,49 +198,21 @@ export default function StudentCard({
         )}
       </Section>
 
-      <Section title="Fees" aside={total ? `Balance ${peso(Math.max(0, total - paid))}` : "Not assessed"} defaultOpen={stepIndex(e.status) >= 3}>
-        {detail.feeLines.length === 0 ? (
-          <p className="text-sm text-muted">Fees are assessed once the load is set.</p>
-        ) : (
-          <div className="space-y-3 text-sm">
-            <ul className="divide-y divide-line">
-              {detail.feeLines.map((f) => (
-                <li key={f.id} className="flex justify-between gap-4 py-1.5">
-                  <span>{f.label}</span>
-                  <span className="tabular-nums">{peso(f.amount)}</span>
-                </li>
-              ))}
-            </ul>
-            <dl className="rounded-lg bg-paper px-3 py-1">
-              <Row label="Total" value={<span className="tabular-nums">{peso(total)}</span>} />
-              <Row label="Paid" value={<span className="tabular-nums">{peso(paid)}</span>} />
-              <Row label="Balance" value={<span className="tabular-nums" data-testid="balance">{peso(Math.max(0, total - paid))}</span>} />
-              <Row label="Minimum downpayment" value={peso(requiredDownpayment(total, settings))} />
-              {e.tuition_plan && e.tuition_plan !== "annual" && (
-                <Row
-                  label={`Per installment (${PLAN_INFO[e.tuition_plan].installments}x)`}
-                  value={peso(total / PLAN_INFO[e.tuition_plan].installments)}
-                />
-              )}
-            </dl>
-            {detail.payments.length > 0 && (
-              <div>
-                <p className="mb-1 text-xs font-medium text-muted">Payments</p>
-                <ul className="divide-y divide-line">
-                  {detail.payments.map((p) => (
-                    <li key={p.id} className="flex justify-between gap-4 py-1.5">
-                      <span>
-                        OR #{p.or_no} <span className="text-muted">· {fmtDate(p.paid_at)}</span>
-                      </span>
-                      <span className="tabular-nums">{peso(p.amount)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-      </Section>
+      {showFees && (
+        <Section
+          title="Fees"
+          aside={
+            detail.ledger.length === 0
+              ? "Not assessed"
+              : fees.credit > 0
+                ? `Credit ${peso(fees.credit)}`
+                : `Balance ${peso(fees.balance)}`
+          }
+          defaultOpen={stepIndex(e.status) >= 3 || fees.previous > 0 || !!term.closed_at}
+        >
+          <FeesSection detail={detail} session={session} store={store} onChanged={onChanged} />
+        </Section>
+      )}
 
       <Section title="History" aside={`${detail.history.length} ${detail.history.length === 1 ? "entry" : "entries"}`} defaultOpen={false}>
         <ol className="space-y-3 border-l-2 border-line pl-4" data-testid="history">

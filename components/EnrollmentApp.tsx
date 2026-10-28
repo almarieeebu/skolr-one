@@ -14,6 +14,11 @@ import StudentCard from "./StudentCard";
 import ActionBox from "./ActionBox";
 import NewApplicationForm from "./NewApplicationForm";
 import LoadPicker from "./LoadPicker";
+import DiscountForm from "./DiscountForm";
+import FeeSetupPanel from "./FeeSetupPanel";
+import CloseTermPanel from "./CloseTermPanel";
+import Statement from "./Statement";
+import { feePermissions } from "@/lib/fees";
 import { Button, Drawer } from "./ui";
 
 export default function EnrollmentApp({ demo }: { demo: boolean }) {
@@ -24,7 +29,7 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
   const [items, setItems] = useState<EnrollmentListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<EnrollmentDetail | null>(null);
-  const [drawer, setDrawer] = useState<"new" | "load" | null>(null);
+  const [drawer, setDrawer] = useState<"new" | "load" | "discount" | "setup" | "close" | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,9 +108,11 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
 
   const role = session.actor.role;
   const canApply = role === "registrar" || role === "student" || role === "parent";
+  const fees = feePermissions(role);
 
   return (
-    <div className="flex min-h-dvh flex-col">
+    <>
+    <div className="flex min-h-dvh flex-col print:hidden">
       <Header
         session={session}
         demo={store instanceof DemoStore}
@@ -115,6 +122,8 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
           await store.signOut();
           router.replace("/login");
         }}
+        onFeeSetup={fees.setup ? () => setDrawer("setup") : undefined}
+        onCloseTerm={fees.closeTerm ? () => setDrawer("close") : undefined}
       />
 
       <main className="mx-auto grid w-full max-w-[1500px] flex-1 grid-cols-[minmax(0,1fr)] content-start gap-4 px-4 py-4 lg:grid-cols-[340px_minmax(0,1fr)_320px] lg:px-6">
@@ -152,6 +161,7 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
                 store={store}
                 onChanged={afterChange}
                 onPickLoad={() => setDrawer("load")}
+                onApplyDiscount={() => setDrawer("discount")}
               />
             </div>
           </>
@@ -194,6 +204,39 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
         )}
       </Drawer>
 
+      <Drawer title="Apply discount or scholarship" open={drawer === "discount" && !!detail} onClose={() => setDrawer(null)}>
+        {detail && (
+          <DiscountForm
+            detail={detail}
+            store={store}
+            onDone={async (msg) => {
+              setDrawer(null);
+              await afterChange(msg);
+            }}
+          />
+        )}
+      </Drawer>
+
+      <Drawer title="Fee setup" open={drawer === "setup"} onClose={() => setDrawer(null)}>
+        <FeeSetupPanel
+          store={store}
+          onDone={async (msg) => {
+            setDrawer(null);
+            await afterChange(msg);
+          }}
+        />
+      </Drawer>
+
+      <Drawer title="Close term (carry balances forward)" open={drawer === "close"} onClose={() => setDrawer(null)}>
+        <CloseTermPanel
+          store={store}
+          onDone={async (msg) => {
+            setDrawer(null);
+            await afterChange(msg);
+          }}
+        />
+      </Drawer>
+
       {toast && (
         <div
           role="status"
@@ -208,5 +251,12 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
         </div>
       )}
     </div>
+    {/* Print only: the statement of account of the open student. */}
+    {detail && fees.view && (
+      <div className="hidden print:block">
+        <Statement detail={detail} session={session} />
+      </div>
+    )}
+    </>
   );
 }

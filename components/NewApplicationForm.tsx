@@ -7,7 +7,7 @@ import type { DataStore, NewApplicationInput, SessionInfo } from "@/lib/data/sto
 import { fullName } from "@/lib/data/store";
 import type { DocType, Student, StudentType, Term, Track, TuitionPlan } from "@/lib/enrollment/types";
 import { DOC_LABEL, isSeniorHigh, requiredDocs } from "@/lib/enrollment/checks";
-import { PLAN_INFO } from "@/lib/enrollment/fees";
+import { PLAN_INFO } from "@/lib/fees";
 import { Button, Field, inputClass } from "./ui";
 
 const COURSES = ["BSIT", "BSCS", "BSBA", "BSEd", "BSN"];
@@ -47,6 +47,7 @@ export default function NewApplicationForm({
   const [returning, setReturning] = useState<Student[]>([]);
   const [form, setForm] = useState(empty("college"));
   const [existingId, setExistingId] = useState("");
+  const [termId, setTermId] = useState("");
   const [files, setFiles] = useState<Partial<Record<DocType, File>>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +58,8 @@ export default function NewApplicationForm({
   }, [store]);
 
   const isCollege = form.track === "college";
-  const term = terms.find((t) => t.track === form.track);
+  const trackTerms = terms.filter((t) => t.track === form.track);
+  const term = trackTerms.find((t) => t.id === termId) ?? trackTerms[0];
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
   const docs = requiredDocs({ track: form.track, student_type: form.student_type });
   const shs = !isCollege && isSeniorHigh(form.level);
@@ -113,15 +115,27 @@ export default function NewApplicationForm({
           </button>
         ))}
       </div>
-      <p className="-mt-2 text-xs text-muted">
-        {term ? `Term: ${term.school_year}${term.semester ? ` · ${term.semester} semester` : ""}` : "No open term."}
-        {" · "}
-        {isCollege ? "CHED rules" : "DepEd rules"}
-      </p>
+      {trackTerms.length > 1 ? (
+        <Field label="Term">
+          <select data-testid="term-select" className={inputClass} value={term?.id ?? ""} onChange={(e) => setTermId(e.target.value)}>
+            {trackTerms.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.school_year}{t.semester ? ` · ${t.semester} semester` : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : (
+        <p className="-mt-2 text-xs text-muted">
+          {term ? `Term: ${term.school_year}${term.semester ? ` · ${term.semester} semester` : ""}` : "No open term."}
+          {" · "}
+          {isCollege ? "CHED rules" : "DepEd rules"}
+        </p>
+      )}
 
       {returning.length > 0 && (
         <Field label="Returning student?" hint="Students who already have an ID skip to picking subjects/section.">
-          <select className={inputClass} value={existingId} onChange={(e) => setExistingId(e.target.value)}>
+          <select data-testid="returning-select" className={inputClass} value={existingId} onChange={(e) => setExistingId(e.target.value)}>
             <option value="">No, new applicant</option>
             {returning.map((s) => (
               <option key={s.id} value={s.id}>

@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import type { DataStore, SessionInfo } from "@/lib/data/store";
 import type { EnrollmentDetail } from "@/lib/enrollment/types";
 import { checkCollegeLoad, checkSection, formatSchedule, totalUnits } from "@/lib/enrollment/checks";
-import { assessCollege, assessK12, peso } from "@/lib/enrollment/fees";
+import { assess, peso } from "@/lib/fees";
 import { Button, Field, Warnings, inputClass } from "./ui";
 
 export default function LoadPicker({
@@ -44,7 +44,10 @@ export default function LoadPicker({
         : checkSection(chosen[0], e, detail.takenCounts),
     [isCollege, chosen, detail, settings, e],
   );
-  const assessment = isCollege ? assessCollege(chosen, settings) : assessK12(e, settings);
+  // Estimate with the term's fee setup (the real charges are posted on save).
+  const assessment = detail.feeSetup
+    ? assess({ enrollment: e, setup: detail.feeSetup, subjects: isCollege ? chosen : [], discounts: detail.discounts })
+    : null;
 
   const toggle = (id: string) => {
     setNeedsReason(false);
@@ -109,6 +112,7 @@ export default function LoadPicker({
                   <span className="mt-0.5 block text-xs text-muted">
                     {formatSchedule(o)} · {o.room}
                     {o.lab_fee > 0 && ` · lab ${peso(o.lab_fee)}`}
+                    {o.is_major && " · major"}
                     {" · "}
                     <span className={left === 0 ? "font-medium text-danger" : ""}>
                       {left === 0 ? "Full" : `${left} ${isCollege ? "slots" : "seats"} left`}
@@ -136,8 +140,8 @@ export default function LoadPicker({
           </p>
         )}
         <p className="flex justify-between">
-          <span>Estimated fees</span>
-          <span className="font-semibold tabular-nums">{peso(assessment.total)}</span>
+          <span>Estimated fees this term</span>
+          <span className="font-semibold tabular-nums" data-testid="fee-estimate">{assessment ? peso(assessment.total) : "No fee setup yet"}</span>
         </p>
       </div>
 

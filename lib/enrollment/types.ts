@@ -1,6 +1,9 @@
 // Shared domain types. Field names match the database columns (snake_case)
 // so the demo store and the Supabase store can use the same shapes.
 
+import type { Discount, FeeSetup, LedgerEntry, Payment } from "../fees/types";
+export type { Payment } from "../fees/types";
+
 export type Track = "college" | "k12";
 
 export type Role = "registrar" | "cashier" | "teacher" | "student" | "parent" | "dean";
@@ -22,19 +25,10 @@ export type TuitionPlan = "annual" | "quarterly" | "monthly";
 
 export type DocType = "psa_birth_cert" | "form_138" | "honorable_dismissal" | "tor";
 
+/** Fees (rates, misc items, plans, downpayment) live in fee setups, not here. */
 export interface SchoolSettings {
   use_dean_approval: boolean;
-  min_downpayment: number;
   max_units: number;
-  rate_per_unit: number;
-  misc_fee: number;
-  /** K to 12: yearly tuition per grade level (falls back to k12_default_tuition). */
-  k12_tuition?: Record<string, number>;
-  k12_default_tuition?: number;
-  k12_misc_fee?: number;
-  /** ESC (JHS) / SHS voucher deduction amounts. */
-  esc_amount?: number;
-  shs_voucher_amount?: number;
 }
 
 export interface School {
@@ -52,6 +46,8 @@ export interface Term {
   semester: string | null; // "1st", "2nd", "summer"; null for K to 12
   track: Track;
   is_open: boolean;
+  /** Set when the registrar closes the term's accounts (balances carried forward). */
+  closed_at: string | null;
 }
 
 export interface Profile {
@@ -141,6 +137,8 @@ export interface Offering {
   title: string;
   units: number; // 0 for sections
   lab_fee: number;
+  /** Major subject: charged at the major rate per unit. */
+  is_major: boolean;
   days: string | null; // "MWF", "TTh", "S"
   start_time: string | null; // "08:00"
   end_time: string | null; // "09:30"
@@ -157,24 +155,6 @@ export interface EnrollmentLoad {
   school_id: string;
   enrollment_id: string;
   offering_id: string;
-}
-
-export interface FeeLine {
-  id: string;
-  school_id: string;
-  enrollment_id: string;
-  label: string;
-  amount: number;
-}
-
-export interface Payment {
-  id: string;
-  school_id: string;
-  enrollment_id: string;
-  amount: number;
-  or_no: string;
-  cashier_id: string;
-  paid_at: string;
 }
 
 export interface HistoryRow {
@@ -201,7 +181,11 @@ export interface EnrollmentDetail {
   offerings: Offering[];
   /** How many OTHER enrollments use each offering (for slot checks). */
   takenCounts: Record<string, number>;
-  feeLines: FeeLine[];
+  /** The fee setup that applies (most specific scope), if any. */
+  feeSetup: FeeSetup | null;
+  discounts: Discount[];
+  /** Posted ledger rows of this enrollment, oldest first. */
+  ledger: LedgerEntry[];
   payments: Payment[];
   history: HistoryRow[];
 }

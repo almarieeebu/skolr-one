@@ -1,6 +1,8 @@
 // SUPABASE MODE: same DataStore interface, backed by Postgres + RLS.
-// Business rules still run in lib/enrollment (planAction); this file only
-// loads rows and saves the planned changes.
+// Business rules still run in lib/enrollment (planAction) for the checks.
+// Everything about money is posted by database functions (0002_fees.sql):
+// fees_assess, fees_take_payment, fees_apply_discount, fees_void_payment,
+// fees_close_term. The browser never writes fee rows itself.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "../supabase/client";
@@ -8,6 +10,7 @@ import type {
   DocType,
   Enrollment,
   EnrollmentDetail,
+  Offering,
   Role,
   School,
   Student,
@@ -16,11 +19,27 @@ import type {
 import { planAction, type Mutations, type PlanResult, type WithOverride } from "../enrollment/actions";
 import { isWaitingOn, sortForRole } from "../enrollment/queue";
 import { nextSeq } from "../enrollment/ids";
-import { totalPaid } from "../enrollment/fees";
+import {
+  balance,
+  findSetup,
+  planFeeAction,
+  planTermClose,
+  validateSetup,
+  type Discount,
+  type FeeActionInput,
+  type FeeResult,
+  type FeeSetup,
+  type LedgerEntry,
+  type OrSeries,
+  type Payment,
+} from "../fees";
 import {
   fullName,
   termLabel,
+  type ClosePreview,
   type DataStore,
+  type FeeSetupDraft,
+  type SubjectFeeEdit,
   type EnrollmentListItem,
   type NewApplicationInput,
   type SessionInfo,
@@ -32,6 +51,19 @@ function must<T>(res: { data: T; error: { message: string } | null }): T {
   if (res.error) throw new Error(res.error.message);
   return res.data;
 }
+
+// Postgres numeric columns arrive as strings.
+const numLedger = (r: LedgerEntry): LedgerEntry => ({ ...r, debit: Number(r.debit), credit: Number(r.credit) });
+const numPayment = (p: Payment): Payment => ({ ...p, amount: Number(p.amount) });
+const numDiscount = (d: Discount): Discount => ({ ...d, value: Number(d.value) });
+const numSetup = (s: FeeSetup): FeeSetup => ({
+  ...s,
+  min_downpayment: Number(s.min_downpayment),
+  rate_per_unit: Number(s.rate_per_unit),
+  major_rate_per_unit: Number(s.major_rate_per_unit),
+  esc_amount: Number(s.esc_amount),
+  shs_voucher_amount: Number(s.shs_voucher_amount),
+});
 
 export class SupabaseStore implements DataStore {
   readonly mode = "supabase" as const;
@@ -75,20 +107,19 @@ export class SupabaseStore implements DataStore {
           "id, status, track, level, course, strand, dean_approved, fix_note, updated_at, student_id," +
             "student:students(first_name, middle_name, last_name, student_no)," +
             "term:terms(school_year, semester, track, is_open, id, school_id)," +
-            "fee_lines(amount), payments(amount)",
+            "ledger_entries(debit, credit)",
         )
         .eq("school_id", school.id),
     ) as unknown as Array<
       Enrollment & {
         student: Student;
         term: Term;
-        fee_lines: { amount: number }[];
-        payments: { amount: number }[];
+        ledger_entries: { debit: number; credit: number }[];
       }
     >;
     const items = rows.map((r) => {
-      const fees = r.fee_lines.reduce((a, f) => a + Number(f.amount), 0);
-      const paid = totalPaid(r.payments.map((p) => ({ amount: Number(p.amount) })));
+      // RLS returns no ledger rows to teachers, so their balance shows 0.
+      const owed = balance((r.ledger_entries ?? []).map((l) => ({ debit: Number(l.debit), credit: Number(l.credit) })));
       const base = {
         id: r.id,
         student_id: r.student_id,
@@ -102,7 +133,7 @@ export class SupabaseStore implements DataStore {
         status: r.status,
         dean_approved: r.dean_approved,
         fix_note: r.fix_note,
-        balance: Math.max(0, fees - paid),
+        balance: Math.max(0, owed),
         updated_at: r.updated_at,
       };
       return { ...base, waiting: isWaitingOn(actor.role, base, school.settings) };
@@ -113,13 +144,15 @@ export class SupabaseStore implements DataStore {
   async getDetail(enrollmentId: string): Promise<EnrollmentDetail | null> {
     const e = must(await this.sb.from("enrollments").select("*").eq("id", enrollmentId).maybeSingle()) as Enrollment | null;
     if (!e) return null;
-    const [student, term, documents, loads, offerings, feeLines, payments, history, counts] = await Promise.all([
+    const [student, term, documents, loads, offerings, setups, discounts, ledger, payments, history, counts] = await Promise.all([
       this.sb.from("students").select("*").eq("id", e.student_id).single(),
       this.sb.from("terms").select("*").eq("id", e.term_id).single(),
       this.sb.from("documents").select("*").eq("enrollment_id", e.id),
       this.sb.from("enrollment_loads").select("*").eq("enrollment_id", e.id),
       this.sb.from("offerings").select("*").eq("term_id", e.term_id).order("code"),
-      this.sb.from("fee_lines").select("*").eq("enrollment_id", e.id),
+      this.sb.from("fee_setups").select("*").eq("term_id", e.term_id),
+      this.sb.from("discounts").select("*").eq("enrollment_id", e.id).order("applied_at"),
+      this.sb.from("ledger_entries").select("*").eq("enrollment_id", e.id).order("seq"),
       this.sb.from("payments").select("*").eq("enrollment_id", e.id).order("paid_at"),
       this.sb.from("enrollment_history").select("*").eq("enrollment_id", e.id).order("created_at"),
       // Security-definer function: counts seats without exposing other students.
@@ -129,7 +162,6 @@ export class SupabaseStore implements DataStore {
     for (const row of (must(counts) as { offering_id: string; taken: number }[]) ?? []) {
       takenCounts[row.offering_id] = Number(row.taken);
     }
-    const num = <T extends { amount: number }>(rows: T[]) => rows.map((r) => ({ ...r, amount: Number(r.amount) }));
     return {
       enrollment: { ...e, overrides: e.overrides ?? [] },
       student: must(student),
@@ -140,8 +172,10 @@ export class SupabaseStore implements DataStore {
         ...o, units: Number(o.units), lab_fee: Number(o.lab_fee),
       })),
       takenCounts,
-      feeLines: num(must(feeLines) ?? []),
-      payments: num(must(payments) ?? []),
+      feeSetup: findSetup(((must(setups) ?? []) as FeeSetup[]).map(numSetup), e),
+      discounts: ((must(discounts) ?? []) as Discount[]).map(numDiscount),
+      ledger: ((must(ledger) ?? []) as LedgerEntry[]).map(numLedger),
+      payments: ((must(payments) ?? []) as Payment[]).map(numPayment),
       history: must(history) ?? [],
     } as EnrollmentDetail;
   }
@@ -240,7 +274,21 @@ export class SupabaseStore implements DataStore {
       { detail, school, actor, now: new Date().toISOString(), nextStudentSeq: seq },
       input,
     );
-    if (result.ok) await this.apply(detail, result.mutations);
+    if (!result.ok) return result;
+    if (input.type === "take_payment") {
+      // Payment + ledger row + OR series + status + history in ONE database transaction.
+      must(
+        await this.sb.rpc("fees_take_payment", {
+          p_enrollment: enrollmentId,
+          p_amount: Number(input.amount),
+          p_mode: input.mode ?? "cash",
+          p_reference: input.reference ?? null,
+          p_or_no: input.or_no,
+        }),
+      );
+      return result;
+    }
+    await this.apply(detail, result.mutations);
     return result;
   }
 
@@ -259,13 +307,116 @@ export class SupabaseStore implements DataStore {
         must(await this.sb.from("enrollment_loads").insert(m.replaceLoads.map((offering_id) => ({ school_id, enrollment_id: eid, offering_id }))));
       }
     }
-    if (m.replaceFeeLines) {
-      must(await this.sb.from("fee_lines").delete().eq("enrollment_id", eid));
-      must(await this.sb.from("fee_lines").insert(m.replaceFeeLines.map((l) => ({ school_id, enrollment_id: eid, ...l }))));
-    }
-    if (m.addPayment) must(await this.sb.from("payments").insert({ school_id, enrollment_id: eid, ...m.addPayment }));
     must(await this.sb.from("enrollments").update(m.enrollment).eq("id", eid));
+    // Charges are worked out by the database from the saved load and the fee
+    // setup (the planned rows in m.postLedger are only used in demo mode).
+    if (m.postLedger) must(await this.sb.rpc("fees_assess", { p_enrollment: eid }));
     must(await this.sb.from("enrollment_history").insert({ school_id, enrollment_id: eid, ...m.history }));
+  }
+
+  // ----- fees -----
+
+  async listAllTerms(): Promise<Term[]> {
+    const { school } = await this.me();
+    return must(await this.sb.from("terms").select("*").eq("school_id", school.id).order("school_year")) as Term[];
+  }
+
+  async listFeeSetups(): Promise<FeeSetup[]> {
+    const { school } = await this.me();
+    return ((must(await this.sb.from("fee_setups").select("*").eq("school_id", school.id)) ?? []) as FeeSetup[]).map(numSetup);
+  }
+
+  async listTermSubjects(termId: string): Promise<Offering[]> {
+    const rows = must(await this.sb.from("offerings").select("*").eq("term_id", termId).eq("kind", "subject").order("code")) as Offering[];
+    return rows.map((o) => ({ ...o, units: Number(o.units), lab_fee: Number(o.lab_fee) }));
+  }
+
+  async saveFeeSetup(setup: FeeSetupDraft, subjects: SubjectFeeEdit[]) {
+    const problems = validateSetup(setup);
+    if (problems.length) throw new Error(problems.join(" "));
+    // RLS: only the registrar may write fee setups and offerings.
+    const { id, ...row } = setup;
+    const payload = { ...row, updated_at: new Date().toISOString() };
+    if (id) must(await this.sb.from("fee_setups").update(payload).eq("id", id));
+    else must(await this.sb.from("fee_setups").insert(payload));
+    for (const sub of subjects) {
+      must(await this.sb.from("offerings").update({ lab_fee: Number(sub.lab_fee) || 0, is_major: sub.is_major }).eq("id", sub.id));
+    }
+  }
+
+  async getOrSeries(): Promise<OrSeries> {
+    const { school } = await this.me();
+    const row = must(await this.sb.from("or_series").select("*").eq("school_id", school.id).maybeSingle()) as OrSeries | null;
+    return row ? { ...row, next_no: Number(row.next_no) } : { school_id: school.id, prefix: "", next_no: 1, pad: 6 };
+  }
+
+  async saveOrSeries(s: Pick<OrSeries, "prefix" | "next_no" | "pad">) {
+    const { school } = await this.me();
+    must(await this.sb.from("or_series").upsert({ school_id: school.id, ...s }, { onConflict: "school_id" }));
+  }
+
+  async runFeeAction(enrollmentId: string, input: FeeActionInput): Promise<FeeResult> {
+    const { actor } = await this.me();
+    const detail = await this.getDetail(enrollmentId);
+    if (!detail) return { ok: false, error: "Enrollment not found." };
+    // Same checks as demo mode first, for friendly messages; the database checks again.
+    const r = planFeeAction({ detail, actor, now: new Date().toISOString(), newId: "pending" }, input);
+    if (!r.ok) return r;
+    const call =
+      input.type === "apply_discount"
+        ? this.sb.rpc("fees_apply_discount", {
+            p_enrollment: enrollmentId, p_name: input.name, p_scope: input.scope, p_target: input.target,
+            p_kind: input.kind, p_value: Number(input.value), p_reason: input.reason,
+          })
+        : input.type === "remove_discount"
+          ? this.sb.rpc("fees_remove_discount", { p_discount: input.discount_id, p_reason: input.reason })
+          : this.sb.rpc("fees_void_payment", { p_payment: input.payment_id, p_reason: input.reason });
+    const res = await call;
+    if (res.error) return { ok: false, error: res.error.message };
+    return r;
+  }
+
+  private async closeData(termId: string) {
+    const { school } = await this.me();
+    const [terms, enrollments, students] = await Promise.all([
+      this.sb.from("terms").select("*").eq("school_id", school.id),
+      this.sb.from("enrollments").select("id, student_id, term_id, status, created_at").eq("school_id", school.id),
+      this.sb.from("students").select("id, first_name, middle_name, last_name").eq("school_id", school.id),
+    ]);
+    const ledger = must(
+      await this.sb.from("ledger_entries").select("*").eq("term_id", termId).order("seq"),
+    ) as LedgerEntry[];
+    const ledgerByEnrollment: Record<string, LedgerEntry[]> = {};
+    for (const r of ledger.map(numLedger)) (ledgerByEnrollment[r.enrollment_id] ??= []).push(r);
+    return {
+      terms: must(terms) as Term[],
+      enrollments: must(enrollments) as Enrollment[],
+      students: must(students) as Student[],
+      ledgerByEnrollment,
+    };
+  }
+
+  async previewTermClose(termId: string): Promise<ClosePreview> {
+    const d = await this.closeData(termId);
+    const term = d.terms.find((t) => t.id === termId);
+    if (!term) return { label: "", items: [], total: 0, error: "Term not found." };
+    const label = termLabel(term);
+    const plan = planTermClose({ term, termLabel: label, enrollments: d.enrollments, terms: d.terms, ledgerByEnrollment: d.ledgerByEnrollment });
+    if ("error" in plan) return { label, items: [], total: 0, error: plan.error };
+    return {
+      label,
+      total: plan.total,
+      items: plan.items.map((i) => {
+        const next = d.enrollments.find((x) => x.id === i.next_enrollment_id);
+        const t = next && d.terms.find((x) => x.id === next.term_id);
+        return { ...i, student_name: fullName(d.students.find((s) => s.id === i.student_id)!), next_label: t ? termLabel(t) : null };
+      }),
+    };
+  }
+
+  async closeTerm(termId: string) {
+    const rows = must(await this.sb.rpc("fees_close_term", { p_term: termId })) as { closed: number; total: number }[];
+    return { closed: Number(rows?.[0]?.closed ?? 0), total: Number(rows?.[0]?.total ?? 0) };
   }
 
   async uploadDocument(enrollmentId: string, type: DocType, file: File) {

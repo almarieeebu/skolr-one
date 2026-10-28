@@ -14,7 +14,7 @@ import type {
 } from "./types";
 import { canTransition, isFinal } from "./status";
 import { checkCollegeLoad, checkPapers, checkSection } from "./checks";
-import { assessCollege, assessK12, requiredDownpayment, totalPaid, peso, type FeeLineDraft } from "./fees";
+import { feeSummary, manilaDate, peso, planAssessment, planPayment, type LedgerDraft, type Payment, type PaymentMode } from "../fees";
 import { formatStudentNo } from "./ids";
 
 export type ActionType =
@@ -46,7 +46,7 @@ export type ActionInput =
   | { type: "reject"; reason: string }
   | { type: "assign_id" }
   | { type: "set_load"; offering_ids: string[] }
-  | { type: "take_payment"; amount: number; or_no: string }
+  | { type: "take_payment"; amount: number; or_no: string; mode?: PaymentMode; reference?: string | null }
   | { type: "dean_approve" }
   | { type: "approve" }
   | { type: "withdraw"; reason: string };
@@ -101,8 +101,13 @@ export interface Mutations {
   student?: Partial<Student>;
   checkAllDocs?: boolean;
   replaceLoads?: string[];
-  replaceFeeLines?: FeeLineDraft[];
-  addPayment?: { amount: number; or_no: string; cashier_id: string };
+  /** Ledger rows to post (charges and discounts after a load change). */
+  postLedger?: LedgerDraft[];
+  /** A payment and its ledger row (the row's payment id is filled in by the store). */
+  addPayment?: {
+    payment: Omit<Payment, "id" | "school_id" | "enrollment_id" | "paid_at">;
+    row: LedgerDraft;
+  };
   history: Omit<HistoryRow, "id" | "school_id" | "enrollment_id">;
 }
 
@@ -176,40 +181,38 @@ export function planAction(ctx: PlanContext, input: WithOverride): PlanResult {
     }
 
     case "set_load": {
+      if (detail.term.closed_at) return fail("This term is closed.");
       const picked = detail.offerings.filter((o) => input.offering_ids.includes(o.id));
+      let chosen: typeof picked;
       if (e.track === "college") {
-        const subjects = picked.filter((o) => o.kind === "subject");
+        chosen = picked.filter((o) => o.kind === "subject");
         warnings = checkCollegeLoad({
-          picked: subjects,
+          picked: chosen,
           student: detail.student,
           settings,
           takenCounts: detail.takenCounts,
         });
-        m.replaceLoads = subjects.map((s) => s.id);
-        m.replaceFeeLines = assessCollege(subjects, settings).lines;
       } else {
         const sections = picked.filter((o) => o.kind === "section");
         warnings = checkSection(sections[0], e, detail.takenCounts);
         if (sections.length > 1) warnings.push("Pick only one section.");
         if (!sections[0]) return fail("Pick a section.");
-        m.replaceLoads = [sections[0].id];
-        m.replaceFeeLines = assessK12(e, settings).lines;
+        chosen = [sections[0]];
       }
+      const fees = planAssessment(detail, chosen);
+      if (!fees.ok) return fail(fees.error);
+      m.replaceLoads = chosen.map((o) => o.id);
+      m.postLedger = fees.rows;
       to = "load_set";
       break;
     }
 
     case "take_payment": {
-      const amount = Number(input.amount);
-      if (!(amount > 0)) return fail("Enter an amount greater than zero.");
-      if (!input.or_no?.trim()) return fail("Enter the OR (official receipt) number.");
-      m.addPayment = { amount, or_no: input.or_no.trim(), cashier_id: actor.user_id };
-      const total = detail.feeLines.reduce((s, l) => s + l.amount, 0);
-      const paidAfter = totalPaid(detail.payments) + amount;
-      if (e.status === "load_set" && paidAfter >= requiredDownpayment(total, settings)) {
-        to = "assessed_paid";
-      }
-      reason = `Paid ${peso(amount)}, OR #${input.or_no.trim()}`;
+      const p = planPayment(detail, { amount: input.amount, or_no: input.or_no, mode: input.mode ?? "cash", reference: input.reference }, now);
+      if (!p.ok) return fail(p.error);
+      m.addPayment = { payment: { ...p.payment, cashier_id: actor.user_id }, row: p.row };
+      if (e.status === "load_set" && p.downpaymentMet) to = "assessed_paid";
+      reason = `Paid ${peso(p.payment.amount)}, OR #${p.payment.or_no}`;
       break;
     }
 
@@ -219,10 +222,18 @@ export function planAction(ctx: PlanContext, input: WithOverride): PlanResult {
       break;
 
     case "approve": {
-      const total = detail.feeLines.reduce((s, l) => s + l.amount, 0);
-      const need = requiredDownpayment(total, settings);
-      const paid = totalPaid(detail.payments);
-      if (paid < need) warnings.push(`No downpayment yet: paid ${peso(paid)} of ${peso(need)}.`);
+      const f = feeSummary({
+        track: e.track,
+        plan: e.tuition_plan,
+        setup: detail.feeSetup,
+        ledger: detail.ledger,
+        payments: detail.payments,
+        today: manilaDate(now),
+      });
+      if (f.previous > 0 && f.paid < f.previous) {
+        warnings.push(`Unpaid back account: ${peso(f.previous - f.paid)} from an earlier term.`);
+      }
+      if (!f.downpaymentMet) warnings.push(`No downpayment yet: paid ${peso(f.paid)} of ${peso(f.downpaymentRequired)}.`);
       if (settings.use_dean_approval && !e.dean_approved) warnings.push("The dean has not approved yet.");
       to = "officially_enrolled";
       break;
