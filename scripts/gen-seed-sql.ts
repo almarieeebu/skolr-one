@@ -21,7 +21,10 @@ function lit(v: unknown): string {
 function insert(table: string, rows: Row[]): string {
   if (!rows.length) return "";
   const cols = Object.keys(rows[0]);
-  const jsonCols = new Set(["overrides", "settings", "misc_items", "exam_periods", "plans"]);
+  const jsonCols = new Set([
+    "overrides", "settings", "misc_items", "exam_periods", "plans",
+    "period_weights", "college_scale", "k12_weights", "deadlines", "scores", "domains", "old_value", "new_value",
+  ]);
   const cell = (c: string, v: unknown) => (jsonCols.has(c) ? `${lit(JSON.stringify(v))}::jsonb` : lit(v));
   const values = rows.map((r) => `  (${cols.map((c) => cell(c, r[c])).join(", ")})`).join(",\n");
   return `insert into ${table} (${cols.join(", ")}) values\n${values};\n\n`;
@@ -68,6 +71,22 @@ sql += insert("payments", seed.payments as unknown as Row[]);
 sql += insert("ledger_entries", seed.ledger as unknown as Row[]);
 sql += insert("or_series", [seed.orSeries as unknown as Row]);
 sql += insert("enrollment_history", seed.history as unknown as Row[]);
+
+// Grades. Posted sheets are seeded as they are, so the guard trigger is told
+// this is an internal write; the entry trigger still works out each grade.
+sql += `select set_config('grades.internal', 'on', false);\n\n`;
+sql += insert("grade_settings", [seed.gradeSettings as unknown as Row]).replace(
+  /;\n\n$/,
+  "\non conflict (school_id) do update set college_average = excluded.college_average, period_weights = excluded.period_weights,\n" +
+    "  block_average_on_inc = excluded.block_average_on_inc, gwa_decimals = excluded.gwa_decimals, passing_grade = excluded.passing_grade,\n" +
+    "  college_scale = excluded.college_scale, k12_weights = excluded.k12_weights, deadlines = excluded.deadlines, updated_at = excluded.updated_at;\n\n",
+);
+sql += insert("grade_sheets", seed.gradeSheets as unknown as Row[]);
+sql += insert("k12_score_items", seed.scoreItems as unknown as Row[]);
+sql += insert("grade_entries", seed.gradeEntries as unknown as Row[]);
+sql += insert("change_grade_requests", seed.changeRequests as unknown as Row[]);
+sql += insert("grade_history", seed.gradeHistory as unknown as Row[]);
+sql += `select set_config('grades.internal', '', false);\n`;
 
 const out = path.join(__dirname, "..", "supabase", "seed.sql");
 writeFileSync(out, sql);

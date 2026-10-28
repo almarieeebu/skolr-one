@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { DataStore, EnrollmentListItem, SessionInfo } from "@/lib/data/store";
+import type { ClassListItem, DataStore, EnrollmentListItem, SessionInfo } from "@/lib/data/store";
 import type { EnrollmentDetail, Role } from "@/lib/enrollment/types";
 import { DemoStore } from "@/lib/data/demo-store";
 import { SupabaseStore } from "@/lib/data/supabase-store";
@@ -18,8 +18,14 @@ import DiscountForm from "./DiscountForm";
 import FeeSetupPanel from "./FeeSetupPanel";
 import CloseTermPanel from "./CloseTermPanel";
 import Statement from "./Statement";
+import ClassList from "./ClassList";
+import ClassWorkspace from "./ClassWorkspace";
+import GradeSettingsPanel from "./GradeSettingsPanel";
 import { feePermissions } from "@/lib/fees";
+import { gradePermissions } from "@/lib/grades";
 import { Button, Drawer } from "./ui";
+
+type ListMode = "enrollments" | "classes";
 
 export default function EnrollmentApp({ demo }: { demo: boolean }) {
   const router = useRouter();
@@ -29,7 +35,11 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
   const [items, setItems] = useState<EnrollmentListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<EnrollmentDetail | null>(null);
-  const [drawer, setDrawer] = useState<"new" | "load" | "discount" | "setup" | "close" | null>(null);
+  const [drawer, setDrawer] = useState<"new" | "load" | "discount" | "setup" | "close" | "grades" | null>(null);
+  // Left list: enrollments, or classes (teacher's grade sheets / registrar's "Grades to approve").
+  const [mode, setMode] = useState<ListMode>("enrollments");
+  const [classes, setClasses] = useState<ClassListItem[]>([]);
+  const [classId, setClassId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,8 +57,11 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
           return;
         }
         setSession(s);
-        const list = await store.listEnrollments();
+        const [list, cls] = await Promise.all([store.listEnrollments(), store.listClasses()]);
         setItems(list);
+        setClasses(cls);
+        setClassId((c) => (c && cls.some((x) => x.offering_id === c) ? c : null));
+        if (!gradePermissions(s.actor.role).classes) setMode("enrollments");
         const id = keepId === undefined ? selectedId : keepId;
         const still = id && list.some((i) => i.id === id) ? id : null;
         setSelectedId(still);
@@ -81,9 +94,18 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
   const switchRole = async (role: Role) => {
     if (store instanceof DemoStore) {
       store.setRole(role);
+      // Teachers start on their classes; everyone else on enrollments.
+      setMode(role === "teacher" ? "classes" : "enrollments");
+      setClassId(null);
       await refresh(selectedId);
     }
   };
+
+  // First load as a teacher: show the classes.
+  useEffect(() => {
+    if (session?.actor.role === "teacher") setMode("classes");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.actor.user_id]);
 
   const resetDemo = async () => {
     if (store instanceof DemoStore) {
@@ -109,6 +131,10 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
   const role = session.actor.role;
   const canApply = role === "registrar" || role === "student" || role === "parent";
   const fees = feePermissions(role);
+  const grades = gradePermissions(role);
+  const showClasses = grades.classes && mode === "classes";
+  const gradesWaiting = classes.filter((c) => c.waiting).length;
+  const open = showClasses ? !!classId : !!selectedId;
 
   return (
     <>
@@ -124,22 +150,63 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
         }}
         onFeeSetup={fees.setup ? () => setDrawer("setup") : undefined}
         onCloseTerm={fees.closeTerm ? () => setDrawer("close") : undefined}
+        onGradeSettings={grades.settings ? () => setDrawer("grades") : undefined}
       />
 
       <main className="mx-auto grid w-full max-w-[1500px] flex-1 grid-cols-[minmax(0,1fr)] content-start gap-4 px-4 py-4 lg:grid-cols-[340px_minmax(0,1fr)_320px] lg:px-6">
-        {/* Left: list. Hidden on small screens while a student is open. */}
-        <div className={`min-w-0 ${selectedId ? "hidden lg:block" : "block"}`}>
-          <EnrollmentList
-            items={items}
-            role={role}
-            selectedId={selectedId}
-            onSelect={select}
-            onNew={canApply ? () => setDrawer("new") : undefined}
-          />
+        {/* Left: list. Hidden on small screens while a student or class is open. */}
+        <div className={`min-w-0 space-y-3 ${open ? "hidden lg:block" : "block"}`}>
+          {grades.classes && (
+            <div role="tablist" aria-label="List" className="grid grid-cols-2 gap-1 rounded-xl border border-line bg-surface p-1 text-sm">
+              {(role === "teacher" ? (["classes", "enrollments"] as ListMode[]) : (["enrollments", "classes"] as ListMode[])).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === m}
+                  data-testid={`list-mode-${m}`}
+                  onClick={() => setMode(m)}
+                  className={`rounded-lg px-3 py-1.5 font-medium ${mode === m ? "bg-brand text-white" : "text-muted hover:text-ink"}`}
+                >
+                  {m === "classes" ? (role === "teacher" ? "My classes" : "Grades") : role === "teacher" ? "My students" : "Enrollments"}
+                  {m === "classes" && gradesWaiting > 0 && (
+                    <span className={`ml-1.5 rounded-full px-1.5 text-xs ${mode === m ? "bg-white/25" : "bg-wait-soft text-wait"}`}>{gradesWaiting}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          {showClasses ? (
+            <ClassList items={classes} role={role} selectedId={classId} onSelect={setClassId} />
+          ) : (
+            <EnrollmentList
+              items={items}
+              role={role}
+              selectedId={selectedId}
+              onSelect={select}
+              onNew={canApply ? () => setDrawer("new") : undefined}
+            />
+          )}
         </div>
 
         {/* Middle + right */}
-        {detail ? (
+        {showClasses && classId ? (
+          <ClassWorkspace
+            key={classId}
+            store={store}
+            session={session}
+            offeringId={classId}
+            onBack={() => setClassId(null)}
+            onChanged={(msg) => void afterChange(msg)}
+          />
+        ) : showClasses ? (
+          <div className="hidden rounded-2xl border border-dashed border-line bg-surface/60 p-10 text-center text-sm text-muted lg:col-span-2 lg:grid lg:place-items-center">
+            <div>
+              <p className="text-base font-medium text-ink">Pick a class from the list</p>
+              <p className="mt-1">Its grade sheet opens here: {role === "teacher" ? "type grades, save a draft and submit." : "approve, return and decide change requests."}</p>
+            </div>
+          </div>
+        ) : detail ? (
           <>
             <div className="min-w-0 space-y-3">
               <Button variant="ghost" className="lg:hidden" onClick={() => select(null)}>
@@ -227,6 +294,16 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
         />
       </Drawer>
 
+      <Drawer title="Grade settings" open={drawer === "grades"} onClose={() => setDrawer(null)}>
+        <GradeSettingsPanel
+          store={store}
+          onDone={async (msg) => {
+            setDrawer(null);
+            await afterChange(msg);
+          }}
+        />
+      </Drawer>
+
       <Drawer title="Close term (carry balances forward)" open={drawer === "close"} onClose={() => setDrawer(null)}>
         <CloseTermPanel
           store={store}
@@ -252,8 +329,8 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
       )}
     </div>
     {/* Print only: the statement of account of the open student. */}
-    {detail && fees.view && (
-      <div className="hidden print:block">
+    {detail && fees.view && !showClasses && (
+      <div className="hidden print:block" data-print-doc="statement">
         <Statement detail={detail} session={session} />
       </div>
     )}

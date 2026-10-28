@@ -41,8 +41,35 @@ import {
   type OrSeries,
 } from "../fees";
 import {
+  deadlineFor,
+  entryFilled,
+  entryGrade,
+  findArea,
+  gradePermissions,
+  isEditable,
+  passedCodes,
+  planChangeDecision,
+  planChangeRequest,
+  planSheetAction,
+  sheetKind,
+  validateGradeSettings,
+  type ChangeGradeRequest,
+  type EntryValue,
+  type GradeEntry,
+  type GradeHistoryRow,
+  type GradeSettings,
+  type GradeSheet,
+  type ScoreItem,
+  type SheetActionInput,
+} from "../grades";
+import {
   fullName,
   termLabel,
+  type ClassListItem,
+  type ClassSheetDetail,
+  type GradeResult,
+  type SheetDraft,
+  type StudentGrades,
   type ClosePreview,
   type DataStore,
   type FeeSetupDraft,
@@ -70,9 +97,15 @@ interface DemoDb {
   discounts: Discount[];
   ledger: LedgerEntry[];
   orSeries: OrSeries;
+  gradeSettings: GradeSettings;
+  gradeSheets: GradeSheet[];
+  gradeEntries: GradeEntry[];
+  scoreItems: ScoreItem[];
+  changeRequests: ChangeGradeRequest[];
+  gradeHistory: GradeHistoryRow[];
 }
 
-const STORAGE_KEY = "alew-demo-db-v2";
+const STORAGE_KEY = "alew-demo-db-v3";
 const ROLE_KEY = "alew-demo-role";
 
 function freshDb(): DemoDb {
@@ -94,6 +127,12 @@ function freshDb(): DemoDb {
     discounts: seed.discounts,
     ledger: seed.ledger,
     orSeries: seed.orSeries,
+    gradeSettings: seed.gradeSettings,
+    gradeSheets: seed.gradeSheets,
+    gradeEntries: seed.gradeEntries,
+    scoreItems: seed.scoreItems,
+    changeRequests: seed.changeRequests,
+    gradeHistory: seed.gradeHistory,
   });
 }
 
@@ -224,6 +263,20 @@ export class DemoStore implements DataStore, DemoControls {
       history: db.history
         .filter((h) => h.enrollment_id === e.id)
         .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+      passed_codes: this.passedFor(e),
+    });
+  }
+
+  /** Subjects the student passed in OTHER enrollments (posted grades only). */
+  private passedFor(e: Enrollment): string[] {
+    const { db } = this;
+    return passedCodes({
+      enrollments: db.enrollments.filter((x) => x.student_id === e.student_id && x.id !== e.id),
+      offerings: db.offerings,
+      loads: db.loads,
+      sheets: db.gradeSheets,
+      entries: db.gradeEntries,
+      settings: db.gradeSettings,
     });
   }
 
@@ -488,6 +541,249 @@ export class DemoStore implements DataStore, DemoControls {
     Object.assign(r.term, { closed_at: now, is_open: false });
     this.persist();
     return { closed: r.plan.items.length, total: r.plan.total };
+  }
+
+  // ----- grades -----
+
+  private gActor() {
+    const a = this.actor();
+    return { user_id: a.user_id, role: a.role, name: a.name };
+  }
+
+  /** Students in a class: officially enrolled, or anyone who already has a grade there. */
+  private roster(offeringId: string) {
+    const { db } = this;
+    const sheetIds = new Set(db.gradeSheets.filter((s) => s.offering_id === offeringId).map((s) => s.id));
+    const graded = new Set(db.gradeEntries.filter((g) => sheetIds.has(g.sheet_id)).map((g) => g.enrollment_id));
+    return db.loads
+      .filter((l) => l.offering_id === offeringId)
+      .map((l) => db.enrollments.find((e) => e.id === l.enrollment_id)!)
+      .filter((e) => e && (e.status === "officially_enrolled" || graded.has(e.id)))
+      .map((e) => {
+        const st = db.students.find((x) => x.id === e.student_id)!;
+        return { enrollment_id: e.id, student_id: st.id, name: fullName(st), student_no: st.student_no, level: e.level, strand: e.strand };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private teacherName(id: string | null) {
+    return id ? this.db.profiles.find((p) => p.id === id)?.full_name ?? null : null;
+  }
+
+  async listClasses(): Promise<ClassListItem[]> {
+    const { db } = this;
+    const a = this.gActor();
+    if (!gradePermissions(a.role).classes) return [];
+    const useDean = db.school.settings.use_dean_approval;
+    const items: ClassListItem[] = [];
+    for (const o of db.offerings) {
+      if (a.role === "teacher" && o.teacher_id !== a.user_id) continue;
+      const roster = this.roster(o.id);
+      if (a.role !== "teacher" && roster.length === 0) continue;
+      const sheets = db.gradeSheets.filter((s) => s.offering_id === o.id);
+      const submitted = sheets.filter((s) => s.status === "submitted").length;
+      const returned = sheets.filter((s) => s.status === "returned").length;
+      const pending = db.changeRequests.filter((r) => r.status === "pending" && sheets.some((s) => s.id === r.sheet_id)).length;
+      const t = db.terms.find((x) => x.id === o.term_id)!;
+      const waiting =
+        a.role === "teacher" ? returned > 0
+        : a.role === "registrar" ? (!useDean && submitted > 0) || pending > 0
+        : a.role === "dean" ? useDean && submitted > 0 : false;
+      items.push({
+        offering_id: o.id, kind: o.kind, code: o.code, title: o.title, term_id: o.term_id, term_label: termLabel(t),
+        level: o.level, teacher_name: this.teacherName(o.teacher_id), students: roster.length,
+        submitted, returned, pending_changes: pending, waiting,
+      });
+    }
+    // Waiting first, then open terms, then code.
+    const open = (i: ClassListItem) => (db.terms.find((t) => t.id === i.term_id)?.closed_at ? 1 : 0);
+    return items.sort((x, y) => Number(y.waiting) - Number(x.waiting) || open(x) - open(y) || x.code.localeCompare(y.code));
+  }
+
+  async getClassSheet(offeringId: string): Promise<ClassSheetDetail | null> {
+    const { db } = this;
+    const a = this.gActor();
+    const o = db.offerings.find((x) => x.id === offeringId);
+    if (!o || !gradePermissions(a.role).classes) return null;
+    const teaches = o.teacher_id === a.user_id;
+    if (a.role === "teacher" && !teaches) return null;
+    const sheets = db.gradeSheets.filter((s) => s.offering_id === o.id);
+    const ids = new Set(sheets.map((s) => s.id));
+    return structuredClone({
+      offering: o,
+      term: db.terms.find((t) => t.id === o.term_id)!,
+      teacher_name: this.teacherName(o.teacher_id),
+      teaches,
+      roster: this.roster(o.id),
+      sheets,
+      entries: db.gradeEntries.filter((g) => ids.has(g.sheet_id)),
+      items: db.scoreItems.filter((i) => ids.has(i.sheet_id)).sort((x, y) => x.position - y.position),
+      requests: db.changeRequests.filter((r) => ids.has(r.sheet_id)),
+      history: db.gradeHistory.filter((h) => ids.has(h.sheet_id)).sort((x, y) => x.created_at.localeCompare(y.created_at)),
+      settings: db.gradeSettings,
+    });
+  }
+
+  private sheetContext(sheet: Pick<GradeSheet, "status" | "late_allowed" | "term_id" | "period">, offeringTeacher: string | null) {
+    const a = this.gActor();
+    return {
+      actor: a,
+      sheet,
+      teachesClass: a.role === "teacher" && offeringTeacher === a.user_id,
+      useDean: this.db.school.settings.use_dean_approval,
+      deadline: deadlineFor(this.db.gradeSettings, sheet.term_id, sheet.period),
+      now: new Date().toISOString(),
+    };
+  }
+
+  /** Work out the stored grade of every entry of a sheet. */
+  private recompute(sheet: GradeSheet) {
+    const { db } = this;
+    const o = db.offerings.find((x) => x.id === sheet.offering_id)!;
+    const kind = sheetKind(o);
+    const items = db.scoreItems.filter((i) => i.sheet_id === sheet.id);
+    for (const g of db.gradeEntries.filter((x) => x.sheet_id === sheet.id)) {
+      const e = db.enrollments.find((x) => x.id === g.enrollment_id)!;
+      const area = sheet.learning_area ? findArea(e.level, e.strand, sheet.learning_area) : undefined;
+      g.grade = entryGrade(kind, g, items, db.gradeSettings, area);
+    }
+  }
+
+  async saveGradeSheet(d: SheetDraft): Promise<GradeResult> {
+    const { db } = this;
+    const o = db.offerings.find((x) => x.id === d.offering_id);
+    if (!o) return { ok: false, error: "Class not found." };
+    const now = new Date().toISOString();
+    let sheet = db.gradeSheets.find(
+      (s) => s.offering_id === o.id && s.period === d.period && (s.learning_area ?? null) === (d.learning_area ?? null),
+    );
+    const ctx = this.sheetContext(sheet ?? { status: "draft", late_allowed: false, term_id: o.term_id, period: d.period }, o.teacher_id);
+    const plan = planSheetAction(ctx, { type: "save" });
+    if (!plan.ok) return plan;
+    if (!sheet) {
+      sheet = {
+        id: uid(), school_id: db.school.id, term_id: o.term_id, offering_id: o.id, learning_area: d.learning_area,
+        subject_group: d.subject_group, period: d.period, status: "draft", teacher_id: o.teacher_id, return_note: null, late_allowed: false,
+        submitted_at: null, posted_at: null, posted_by: null, updated_at: now,
+      };
+      db.gradeSheets.push(sheet);
+    }
+    sheet.updated_at = now;
+    const sid = sheet.id;
+    db.scoreItems = db.scoreItems.filter((i) => i.sheet_id !== sid);
+    for (const it of d.items) db.scoreItems.push({ ...it, max_score: Number(it.max_score) || 0, school_id: db.school.id, sheet_id: sid });
+    const allowed = new Set(this.roster(o.id).map((r) => r.enrollment_id));
+    for (const en of d.entries) {
+      if (!allowed.has(en.enrollment_id)) continue;
+      let g = db.gradeEntries.find((x) => x.sheet_id === sid && x.enrollment_id === en.enrollment_id);
+      if (!g) {
+        g = { id: uid(), school_id: db.school.id, sheet_id: sid, enrollment_id: en.enrollment_id, percent: null, mark: null, scores: {}, domains: {}, grade: null, updated_at: now };
+        db.gradeEntries.push(g);
+      }
+      Object.assign(g, { percent: en.percent, mark: en.mark, scores: en.scores, domains: en.domains, updated_at: now });
+    }
+    this.recompute(sheet);
+    this.persist();
+    return { ok: true, sheet_id: sid };
+  }
+
+  async runSheetAction(sheetId: string, input: SheetActionInput): Promise<GradeResult> {
+    const { db } = this;
+    const sheet = db.gradeSheets.find((s) => s.id === sheetId);
+    if (!sheet) return { ok: false, error: "Grade sheet not found. Save a draft first." };
+    const o = db.offerings.find((x) => x.id === sheet.offering_id)!;
+    const items = db.scoreItems.filter((i) => i.sheet_id === sheet.id);
+    const kind = sheetKind(o);
+    const missing = this.roster(o.id).filter(
+      (r) => !entryFilled(kind, db.gradeEntries.find((g) => g.sheet_id === sheet.id && g.enrollment_id === r.enrollment_id), items),
+    ).length;
+    const plan = planSheetAction(this.sheetContext(sheet, o.teacher_id), input, missing);
+    if (!plan.ok) return plan;
+    Object.assign(sheet, plan.sheet);
+    if (plan.history) db.gradeHistory.push({ id: uid(), school_id: db.school.id, sheet_id: sheet.id, ...plan.history });
+    this.persist();
+    return { ok: true, sheet_id: sheet.id };
+  }
+
+  async requestGradeChange(entryId: string, newValue: EntryValue, reason: string): Promise<GradeResult> {
+    const { db } = this;
+    const g = db.gradeEntries.find((x) => x.id === entryId);
+    const sheet = g && db.gradeSheets.find((s) => s.id === g.sheet_id);
+    if (!g || !sheet) return { ok: false, error: "Grade not found." };
+    const o = db.offerings.find((x) => x.id === sheet.offering_id)!;
+    const a = this.gActor();
+    const plan = planChangeRequest(
+      {
+        actor: a, sheet, teachesClass: a.role === "teacher" && o.teacher_id === a.user_id,
+        entry: { id: g.id, enrollment_id: g.enrollment_id, value: { percent: g.percent, mark: g.mark, ...(newValue.scores ? { scores: g.scores } : {}) } },
+        pending: db.changeRequests, now: new Date().toISOString(),
+      },
+      { new_value: newValue, reason },
+    );
+    if (!plan.ok) return plan;
+    db.changeRequests.push({ ...plan.request, id: uid(), school_id: db.school.id });
+    db.gradeHistory.push({
+      id: uid(), school_id: db.school.id, sheet_id: sheet.id, entry_id: g.id, action: "request_change",
+      from_status: sheet.status, to_status: sheet.status, note: reason.trim(),
+      actor_id: a.user_id, actor_name: `${a.name} (${a.role})`, created_at: plan.request.requested_at,
+    });
+    this.persist();
+    return { ok: true, sheet_id: sheet.id };
+  }
+
+  async decideGradeChange(requestId: string, approve: boolean, note: string): Promise<GradeResult> {
+    const { db } = this;
+    const r = db.changeRequests.find((x) => x.id === requestId);
+    if (!r) return { ok: false, error: "Request not found." };
+    const plan = planChangeDecision({ actor: this.gActor(), request: r, now: new Date().toISOString() }, { approve, note });
+    if (!plan.ok) return plan;
+    Object.assign(r, plan.request);
+    const sheet = db.gradeSheets.find((s) => s.id === r.sheet_id)!;
+    if (plan.apply) {
+      const g = db.gradeEntries.find((x) => x.id === r.entry_id)!;
+      Object.assign(g, { percent: plan.apply.percent, mark: plan.apply.mark, updated_at: plan.history.created_at });
+      if (plan.apply.scores) g.scores = { ...g.scores, ...plan.apply.scores };
+      this.recompute(sheet);
+    }
+    db.gradeHistory.push({ id: uid(), school_id: db.school.id, sheet_id: sheet.id, ...plan.history });
+    this.persist();
+    return { ok: true, sheet_id: sheet.id };
+  }
+
+  async getStudentGrades(enrollmentId: string): Promise<StudentGrades | null> {
+    const { db } = this;
+    const e = db.enrollments.find((x) => x.id === enrollmentId);
+    const a = this.gActor();
+    const perms = gradePermissions(a.role);
+    if (!e || !this.visible(e) || !perms.view) return null;
+    const mine = new Set(db.loads.filter((l) => l.enrollment_id === e.id).map((l) => l.offering_id));
+    const sheets = db.gradeSheets.filter((s) => {
+      if (!mine.has(s.offering_id)) return false;
+      if (perms.postedOnly && s.status !== "posted") return false;
+      // Teachers see the grades of their own classes only.
+      if (a.role === "teacher") return db.offerings.find((o) => o.id === s.offering_id)?.teacher_id === a.user_id;
+      return true;
+    });
+    const ids = new Set(sheets.map((s) => s.id));
+    return structuredClone({
+      settings: db.gradeSettings,
+      sheets,
+      entries: db.gradeEntries.filter((g) => ids.has(g.sheet_id) && g.enrollment_id === e.id),
+    });
+  }
+
+  async getGradeSettings() {
+    return structuredClone(this.db.gradeSettings);
+  }
+
+  async saveGradeSettings(s: GradeSettings) {
+    if (!gradePermissions(this.role).settings) throw new Error("Only the registrar can change grade settings.");
+    const problems = validateGradeSettings(s);
+    if (problems.length) throw new Error(problems.join(" "));
+    this.db.gradeSettings = { ...s, school_id: this.db.school.id, updated_at: new Date().toISOString() };
+    // Drafts follow the new weights. Posted K to 12 grades keep the grade they were posted with.
+    for (const sh of this.db.gradeSheets) if (isEditable(sh.status)) this.recompute(sh);
+    this.persist();
   }
 
   async uploadDocument(enrollmentId: string, type: DocType, file: File) {

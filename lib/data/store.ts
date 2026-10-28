@@ -17,6 +17,19 @@ import type { Offering } from "../enrollment/types";
 import type { PlanResult, WithOverride } from "../enrollment/actions";
 import type { QueueItem } from "../enrollment/queue";
 import type { CloseItem, FeeActionInput, FeeResult, FeeSetup, OrSeries } from "../fees";
+import type {
+  ChangeGradeRequest,
+  EntryValue,
+  GradeEntry,
+  GradeHistoryRow,
+  GradePeriod,
+  GradeSettings,
+  GradeSheet,
+  KinderMark,
+  ScoreItem,
+  SheetActionInput,
+  SubjectGroup,
+} from "../grades";
 
 export interface SessionInfo {
   actor: Actor;
@@ -78,6 +91,79 @@ export interface ClosePreview {
   error?: string;
 }
 
+// ----- grades -----
+
+/** A class (college subject offering or K to 12 section) in the left list. */
+export interface ClassListItem {
+  offering_id: string;
+  kind: "subject" | "section";
+  code: string;
+  title: string;
+  term_id: string;
+  term_label: string;
+  level: string | null;
+  teacher_name: string | null;
+  students: number;
+  /** Sheets submitted and waiting for approval. */
+  submitted: number;
+  returned: number;
+  pending_changes: number;
+  /** Waiting on the current user (approve, decide a change, fix a returned sheet). */
+  waiting: boolean;
+}
+
+export interface RosterRow {
+  enrollment_id: string;
+  student_id: string;
+  name: string;
+  student_no: string | null;
+  level: string;
+  strand: string | null;
+}
+
+/** Everything the grade sheet needs for one class. */
+export interface ClassSheetDetail {
+  offering: Offering;
+  term: Term;
+  teacher_name: string | null;
+  /** Is the current user the teacher of this class? */
+  teaches: boolean;
+  roster: RosterRow[];
+  sheets: GradeSheet[];
+  entries: GradeEntry[];
+  items: ScoreItem[];
+  requests: ChangeGradeRequest[];
+  history: GradeHistoryRow[];
+  settings: GradeSettings;
+}
+
+/** What the teacher saves for one period / quarter (and learning area). */
+export interface SheetDraft {
+  offering_id: string;
+  period: GradePeriod;
+  learning_area: string | null;
+  /** K to 12: the area's subject group (picks the WW / PT / QA weights). */
+  subject_group: SubjectGroup | null;
+  /** K to 12 activities. New ones carry a fresh uuid. */
+  items: Pick<ScoreItem, "id" | "component" | "label" | "max_score" | "position">[];
+  entries: {
+    enrollment_id: string;
+    percent: number | null;
+    mark: GradeEntry["mark"];
+    scores: Record<string, number | null>;
+    domains: Record<string, KinderMark>;
+  }[];
+}
+
+/** A student's grades for one enrollment (the Grades section and report card). */
+export interface StudentGrades {
+  settings: GradeSettings;
+  sheets: GradeSheet[];
+  entries: GradeEntry[];
+}
+
+export type GradeResult = { ok: true; sheet_id?: string } | { ok: false; error: string };
+
 export interface DataStore {
   readonly mode: "demo" | "supabase";
   getSession(): Promise<SessionInfo | null>;
@@ -105,6 +191,21 @@ export interface DataStore {
   previewTermClose(termId: string): Promise<ClosePreview>;
   /** Registrar: close the term and carry balances forward. */
   closeTerm(termId: string): Promise<{ closed: number; total: number }>;
+
+  // ----- grades -----
+  /** Teacher: their classes. Registrar / dean: every class with students. */
+  listClasses(): Promise<ClassListItem[]>;
+  getClassSheet(offeringId: string): Promise<ClassSheetDetail | null>;
+  /** Teacher: save a draft (creates the sheet the first time). */
+  saveGradeSheet(draft: SheetDraft): Promise<GradeResult>;
+  /** Submit / approve / return / allow late. */
+  runSheetAction(sheetId: string, input: SheetActionInput): Promise<GradeResult>;
+  requestGradeChange(entryId: string, newValue: EntryValue, reason: string): Promise<GradeResult>;
+  decideGradeChange(requestId: string, approve: boolean, note: string): Promise<GradeResult>;
+  /** Students and parents get posted grades only. */
+  getStudentGrades(enrollmentId: string): Promise<StudentGrades | null>;
+  getGradeSettings(): Promise<GradeSettings>;
+  saveGradeSettings(s: GradeSettings): Promise<void>;
 }
 
 /** Extra controls only the demo store has. */

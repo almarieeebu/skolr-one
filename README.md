@@ -32,7 +32,7 @@ Everything happens on **one page**:
 
 ### Roles
 
-Registrar, Cashier, Teacher (view only, sees students in their classes), Student, Parent, and Dean (off by default).
+Registrar, Cashier, Teacher (types grades for their classes, otherwise view only), Student, Parent, and Dean (off by default).
 
 ---
 
@@ -102,6 +102,82 @@ Ledger rows cannot be updated or deleted. Teachers cannot read any fee table.
 
 ---
 
+## Grades
+
+Teachers type grades in the same page. Rules live in `lib/grades/` (pure TypeScript, with tests).
+
+**Where things are**
+
+- **Teacher:** opens on **My classes**. Click a class to open its grade sheet. Tab moves across,
+  Enter moves down and Shift+Enter moves up, like a spreadsheet. **Save draft**, then **Submit grades**.
+- **Registrar:** the **Grades** tab shows all classes. The **Grades to approve** filter shows only
+  submitted sheets. Open one and **Approve and post** it, or **Return to teacher** with a note.
+- **Grade settings** (header button, registrar): college average rule, period weights, grade scale,
+  K to 12 weights per subject group, and deadlines.
+- **Student card → Grades:** the grades of that student, with GWA or general average, and
+  **Print grade slip / Print report card** (SF9 style). Students and parents see posted grades only.
+
+**College (CHED)**
+
+- Four periods: Prelim, Midterm, Semi-final, Final. Teachers type a percent (e.g. 87) or a mark
+  (INC, DRP, W). Each period sheet is submitted and posted on its own.
+- The average of the periods is worked out on the percents, then changed to a grade with the
+  scale (default: 97-100% = 1.00 … 75% = 3.00, below 75% = 5.00). The school picks the average rule:
+  divide by all four, divide by the grades present, or "the Final period is the average".
+- The final grade shows only when the Final period has a value. W beats DRP, DRP beats INC.
+- Remarks: Passed (3.00 or better), Failed, Incomplete, Dropped, Withdrawn.
+- **GWA** = sum of (grade × units) ÷ units. It leaves out INC, DRP, W and non-credit subjects (NSTP).
+- **Prerequisites** now use real passed grades (posted, remark Passed). The old `completed_codes`
+  list on the student still counts too, for subjects taken before the school used this app.
+
+**K to 12 (DepEd Order 8, s. 2015)**
+
+- Each quarter has Written Work, Performance Tasks and Quarterly Assessment. The teacher adds score
+  items (with the highest possible score) and types scores.
+- Percentage score → weighted score (weights per subject group, e.g. Languages/AP/EsP 30/50/20,
+  Science/Math 40/40/20, MAPEH/EPP/TLE 20/60/20) → initial grade → the DepEd transmutation table
+  → quarterly grade (60 lowest, 75 passing).
+- Final grade = average of the quarters. **General average** = average of the final grades, with
+  MAPEH counted **once** (the average of Music, Arts, PE and Health).
+- Descriptors: Outstanding 90-100, Very Satisfactory 85-89, Satisfactory 80-84,
+  Fairly Satisfactory 75-79, Did Not Meet Expectations below 75.
+- **Kinder** uses a simple checklist per domain: B (Beginning), D (Developing), C (Consistent).
+
+**Steps of a grade sheet**
+
+Draft → Submitted → Posted. The registrar posts it (the dean does instead when dean approval is on).
+The registrar or that approver can **Return to teacher**
+a submitted sheet with a note; it goes back to the teacher to fix and submit again.
+After the deadline the teacher sees a warning and cannot submit until the registrar presses
+**Allow late submission**. Posted grades are locked. To change one, the teacher sends a
+**Change grade request** with a reason; the registrar approves or rejects it. Every change is kept
+in the sheet history.
+
+| Role | Can do with grades |
+|------|--------------------|
+| Teacher | Type, save and submit grades for their own classes; ask for a grade change |
+| Registrar | See all grades, approve and post (when dean approval is off), return, allow late, decide change requests, settings |
+| Dean | Approve and post or return when dean approval is on; otherwise view only |
+| Student / Parent | See their own posted grades and print the report card |
+| Cashier | Nothing about grades |
+
+**In Supabase** (`supabase/migrations/0003_grades.sql`): teachers can only write draft grades in
+their own classes (row level security). Grades are worked out again in Postgres by a trigger, so a
+typed-in grade cannot be faked. Submit, approve, return, allow late and change requests go through
+database functions that check your role (`grades_sheet_action`, `grades_request_change`,
+`grades_decide_change`). Posted rows cannot be changed except by those functions.
+Students and parents can read posted grades only.
+
+**Choices we made (assumptions)**
+
+- One sheet per class per period (college) or per quarter and learning area (K to 12).
+- In K to 12 the section's class adviser grades all its learning areas in this MVP.
+- Senior High subjects run for two quarters per semester (Q1-Q2 or Q3-Q4).
+- The college grade slip uses the current grade scale when it is printed.
+- Kinder checklist marks have no change request (the registrar can return the sheet before posting).
+
+---
+
 ## Run it in demo mode (no setup)
 
 ```bash
@@ -128,6 +204,7 @@ an ESC/SHS voucher (Sofia) and a student with a carried balance from last year (
 2. Run the database files, in order, in the **SQL Editor** (or with the Supabase CLI):
    - `supabase/migrations/0001_init.sql` (tables, enums, security rules, storage bucket)
    - `supabase/migrations/0002_fees.sql` (fees: setups, discounts, payments, ledger, OR series, closing)
+   - `supabase/migrations/0003_grades.sql` (grades: sheets, scores, settings, change requests, history)
    - `supabase/seed.sql` (Sample Academy and demo logins)
 
    With the CLI: `supabase link --project-ref <ref>` then `supabase db reset --linked`
@@ -141,6 +218,8 @@ an ESC/SHS voucher (Sofia) and a student with a carried balance from last year (
 4. `npm run dev` and sign in. Seed logins (password `password123`):
    `registrar@sample.edu.ph`, `cashier@sample.edu.ph`, `teacher@sample.edu.ph`,
    `juan@sample.edu.ph` (student), `parent@sample.edu.ph`, `dean@sample.edu.ph`.
+   Subject teachers: `teacher.ge@sample.edu.ph`, `teacher.math@sample.edu.ph`,
+   `teacher.pe@sample.edu.ph`, `teacher.kinder@sample.edu.ph`.
 
 New users need a row in `memberships` (user, school, role) before they can use the app.
 The registrar can add these in the Supabase table editor for now.
@@ -155,6 +234,7 @@ The registrar can add these in the Supabase table editor for now.
 | `npm run seed:sql` | Rebuild `supabase/seed.sql` from `lib/data/seed.ts` |
 | `node scripts/demo-walkthrough.cjs` | Click through the whole flow with Playwright and save screenshots (needs Playwright installed and the dev server running; set `BASE_URL`) |
 | `node scripts/fees-walkthrough.cjs` | Same for the fees flow: setup, load, payments, scholarship, statement, term closing (saves `screenshots/fees-*.png`) |
+| `node scripts/grades-walkthrough.cjs` | Same for grades: encode, submit, return, approve, deadline, change request, report card, phone view (saves `screenshots/grades-*.png`) |
 
 ## How the code is laid out
 
@@ -174,6 +254,13 @@ lib/fees/            fee rules, pure TypeScript + tests
   actions.ts         payments, discounts, voids (planners)
   closing.ts         term closing and carried balances
   roles.ts           who may do what with fees
+lib/grades/          grade rules, pure TypeScript + tests
+  college.ts         CHED periods, average, 1.00-5.00 scale, INC/DRP/W, GWA
+  k12.ts             DepEd WW/PT/QA, transmutation table, general average, Kinder checklist
+  workflow.ts        draft → submit → post, return, late, change requests (planners)
+  report.ts          grade slip / report card rows, passed subjects for prerequisites
+  settings.ts        grade settings, deadlines
+  roles.ts           who may do what with grades
 lib/data/
   store.ts           the ONE data interface the UI uses
   demo-store.ts      in-browser data (demo mode)
@@ -194,12 +281,15 @@ store saves it. So demo mode and Supabase mode behave the same.
 - Penalties are a ledger row type, but there is no button yet to add late penalties.
 - Closing carries balances owed (> 0) only; a credit (overpayment) stays on the closed term.
 - A user works in the first school they belong to (no school switcher yet).
-- "Passed subjects" for prerequisites is a simple list on the student (`completed_codes`) until a grades module exists.
+- Prerequisites use posted, passed grades. `completed_codes` on the student is still read as a
+  fallback for subjects passed before the school used this app (or in another school).
+- INC does not expire automatically (no "INC becomes 5.00 after one year" rule yet).
+- In Supabase mode, saving a draft grade sheet writes rows one request at a time (posting is one transaction).
 
 ## What's next
 
 - **Fees:** late penalties, printable official receipts, refunds of credit.
-- **Grades module:** encode grades per subject, so prerequisites use real passing grades; report cards (SF9) and TOR.
+- **Grades:** INC completion deadlines, Transcript of Records (TOR), SF10, honors and dean's list, import scores from a spreadsheet.
 - **Online payment:** GCash / Maya / bank cards with automatic OR numbers and payment confirmation.
 - School settings screen (dean step, downpayment, max units, rates).
 - DepEd forms export (SF1, SF10) and CHED enrollment lists.

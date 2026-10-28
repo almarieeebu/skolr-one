@@ -75,7 +75,10 @@ export interface Student {
   sex: "M" | "F" | null;
   user_id: string | null; // the student's own login (if any)
   guardian_user_id: string | null;
-  /** Subject codes already passed (stand-in until a grades module exists). */
+  /**
+   * Subject codes credited without a grade here (transferees, credited
+   * subjects). Passed subjects come from posted grades (see passed_codes).
+   */
   completed_codes: string[];
 }
 
@@ -139,6 +142,8 @@ export interface Offering {
   lab_fee: number;
   /** Major subject: charged at the major rate per unit. */
   is_major: boolean;
+  /** Non-credit subject (e.g. NSTP): left out of the GWA. */
+  non_credit: boolean;
   days: string | null; // "MWF", "TTh", "S"
   start_time: string | null; // "08:00"
   end_time: string | null; // "09:30"
@@ -188,6 +193,8 @@ export interface EnrollmentDetail {
   ledger: LedgerEntry[];
   payments: Payment[];
   history: HistoryRow[];
+  /** Subject codes passed in other terms (posted grades), for prerequisites. */
+  passed_codes?: string[];
 }
 
 export interface Actor {

@@ -40,7 +40,7 @@ export default function LoadPicker({
   const warnings = useMemo(
     () =>
       isCollege
-        ? checkCollegeLoad({ picked: chosen, student: detail.student, settings, takenCounts: detail.takenCounts })
+        ? checkCollegeLoad({ picked: chosen, student: detail.student, passedCodes: detail.passed_codes, settings, takenCounts: detail.takenCounts })
         : checkSection(chosen[0], e, detail.takenCounts),
     [isCollege, chosen, detail, settings, e],
   );
