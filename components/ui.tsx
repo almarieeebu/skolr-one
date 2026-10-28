@@ -2,7 +2,7 @@
 
 // Small shared building blocks so every panel looks the same.
 
-import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import type { Status } from "@/lib/enrollment/types";
 import { STATUS_LABEL } from "@/lib/enrollment/status";
 
@@ -84,6 +84,10 @@ export function Section({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  // Open by itself when it becomes relevant (e.g. a balance was carried in).
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
   return (
     <section className="border-t border-line">
       <button

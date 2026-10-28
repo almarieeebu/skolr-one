@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   allowedActions,
-  assessCollege,
-  assessK12,
   canSee,
   canTransition,
   checkCollegeLoad,
@@ -23,6 +21,7 @@ import {
   type School,
 } from "./index";
 import * as seed from "../data/seed";
+import { findSetup } from "../fees";
 
 // ---------- helpers ----------
 const school: School = structuredClone(seed.school);
@@ -40,7 +39,9 @@ function detailFor(enrollmentId: string): EnrollmentDetail {
     loads: seed.enrollmentLoads.filter((l) => l.enrollment_id === e.id),
     offerings: seed.offerings.filter((o) => o.term_id === e.term_id),
     takenCounts: {},
-    feeLines: seed.feeLines.filter((f) => f.enrollment_id === e.id),
+    feeSetup: findSetup(seed.feeSetups, e),
+    discounts: seed.discounts.filter((d) => d.enrollment_id === e.id),
+    ledger: seed.ledger.filter((r) => r.enrollment_id === e.id),
     payments: seed.payments.filter((p) => p.enrollment_id === e.id),
     history: [],
   });
@@ -164,31 +165,6 @@ describe("K to 12 section checks", () => {
   });
 });
 
-// ---------- fees ----------
-describe("fees", () => {
-  it("college = units x rate + lab fees + misc", () => {
-    const a = assessCollege(["GE101", "IT101", "IT102"].map(subject), school.settings);
-    // 9 units x 1200 + 1500 + 2000 lab + 4500 misc
-    expect(a.total).toBe(9 * 1200 + 1500 + 2000 + 4500);
-    expect(a.lines.map((l) => l.label)).toContain("Lab fee - IT102");
-  });
-  it("K to 12 annual plan with ESC grant", () => {
-    const a = assessK12({ level: "Grade 7", esc_voucher: true, tuition_plan: "annual" }, school.settings);
-    expect(a.total).toBe(30000 + 5000 - 9000);
-    expect(a.installments).toBe(1);
-  });
-  it("K to 12 monthly plan adds a charge and splits into 10", () => {
-    const a = assessK12({ level: "Grade 11", esc_voucher: false, tuition_plan: "monthly" }, school.settings);
-    expect(a.total).toBe(35000 * 1.05 + 5000);
-    expect(a.installments).toBe(10);
-    expect(a.perInstallment).toBeCloseTo(a.total / 10);
-  });
-  it("SHS voucher applies to Grade 11", () => {
-    const a = assessK12({ level: "Grade 11", esc_voucher: true, tuition_plan: "annual" }, school.settings);
-    expect(a.total).toBe(35000 + 5000 - 17500);
-  });
-});
-
 // ---------- ids ----------
 describe("student numbers", () => {
   it("formats {code}-{year}-{seq}", () => {
@@ -256,7 +232,9 @@ describe("planAction", () => {
     if (r.ok) {
       expect(r.mutations.enrollment.status).toBe("load_set");
       expect(r.mutations.replaceLoads).toHaveLength(3);
-      expect(r.mutations.replaceFeeLines?.length).toBeGreaterThan(1);
+      // charges plus the back account stays: 2 tuition lines, 1 lab, 6 misc
+      expect(r.mutations.postLedger?.map((x) => x.code)).toContain("lab:IT201");
+      expect(r.mutations.postLedger?.every((x) => x.kind === "charge")).toBe(true);
     }
   });
 
@@ -271,15 +249,32 @@ describe("planAction", () => {
     if (!r.ok) expect(r.canOverride).toBe(false);
   });
 
+  it("needs a fee setup to set the load", () => {
+    const d = detailFor(byStatus("student_made"));
+    d.feeSetup = null;
+    const r = planAction(ctx(d, "student"), { type: "set_load", offering_ids: [subject("GE102").id] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/fee setup/);
+  });
+
   it("downpayment moves load_set to assessed_paid", () => {
     const d = detailFor(byStatus("load_set"));
     const small = planAction(ctx(d, "cashier"), { type: "take_payment", amount: 1000, or_no: "A1" });
     expect(small.ok && small.mutations.enrollment.status).toBe("load_set");
     const enough = planAction(ctx(d, "cashier"), { type: "take_payment", amount: 3000, or_no: "A2" });
     expect(enough.ok && enough.mutations.enrollment.status).toBe("assessed_paid");
-    expect(enough.ok && enough.mutations.addPayment?.or_no).toBe("A2");
+    expect(enough.ok && enough.mutations.addPayment?.payment.or_no).toBe("A2");
+    expect(enough.ok && enough.mutations.addPayment?.row.credit).toBe(3000);
     const noOr = planAction(ctx(d, "cashier"), { type: "take_payment", amount: 3000, or_no: "" });
     expect(noOr.ok).toBe(false);
+  });
+
+  it("approval warns about an unpaid back account", () => {
+    const d = detailFor(byStatus("student_made")); // Pedro: 4,250 carried from last year
+    d.enrollment.status = "load_set";
+    const r = planAction(ctx(d, "registrar"), { type: "approve" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.warnings.join()).toMatch(/back account: ₱4,250.00/);
   });
 
   it("approval requires a downpayment unless overridden", () => {

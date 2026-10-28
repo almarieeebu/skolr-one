@@ -18,12 +18,17 @@ export default function Header({
   onRole,
   onReset,
   onSignOut,
+  onFeeSetup,
+  onCloseTerm,
 }: {
   session: SessionInfo;
   demo: boolean;
   onRole: (r: Role) => void;
   onReset: () => void;
   onSignOut: () => void;
+  /** Registrar only: open the fee setup / term closing side panels. */
+  onFeeSetup?: () => void;
+  onCloseTerm?: () => void;
 }) {
   const { school, actor } = session;
   // The dean only appears when the school uses the dean step.
@@ -50,6 +55,16 @@ export default function Header({
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {onFeeSetup && (
+            <Button variant="secondary" className="min-h-8 px-3 text-xs" onClick={onFeeSetup} data-testid="open-fee-setup">
+              Fee setup
+            </Button>
+          )}
+          {onCloseTerm && (
+            <Button variant="secondary" className="min-h-8 px-3 text-xs" onClick={onCloseTerm} data-testid="open-close-term">
+              Close term
+            </Button>
+          )}
           {demo ? (
             <>
               <span className="hidden rounded-full bg-wait-soft px-2.5 py-1 text-xs font-medium text-wait sm:inline">
