@@ -20,6 +20,7 @@ export default function Header({
   onSignOut,
   onFeeSetup,
   onCloseTerm,
+  onGradeSettings,
 }: {
   session: SessionInfo;
   demo: boolean;
@@ -29,6 +30,8 @@ export default function Header({
   /** Registrar only: open the fee setup / term closing side panels. */
   onFeeSetup?: () => void;
   onCloseTerm?: () => void;
+  /** Registrar only: grade settings side panel. */
+  onGradeSettings?: () => void;
 }) {
   const { school, actor } = session;
   // The dean only appears when the school uses the dean step.
@@ -50,7 +53,7 @@ export default function Header({
           )}
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold leading-tight">{school.name}</p>
-            <p className="text-xs text-muted">Enrollment · S.Y. 2026-2027</p>
+            <p className="text-xs text-muted">Enrollment · Grades · S.Y. 2026-2027</p>
           </div>
         </div>
 
@@ -58,6 +61,11 @@ export default function Header({
           {onFeeSetup && (
             <Button variant="secondary" className="min-h-8 px-3 text-xs" onClick={onFeeSetup} data-testid="open-fee-setup">
               Fee setup
+            </Button>
+          )}
+          {onGradeSettings && (
+            <Button variant="secondary" className="min-h-8 px-3 text-xs" onClick={onGradeSettings} data-testid="open-grade-settings">
+              Grade settings
             </Button>
           )}
           {onCloseTerm && (

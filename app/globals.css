@@ -35,10 +35,16 @@ body {
   outline-offset: 2px;
 }
 
-/* Printing: only the statement of account shows (see components/Statement.tsx). */
+/* Printing: only the statement of account (components/Statement.tsx) or the
+   report card / grade slip (components/ReportCard.tsx) shows. The button
+   pressed sets body[data-print]; the statement is the default. */
 @media print {
   body {
     background: #fff;
+  }
+  body[data-print="report"] [data-print-doc="statement"],
+  body:not([data-print="report"]) [data-print-doc="report"] {
+    display: none !important;
   }
   @page {
     margin: 12mm;

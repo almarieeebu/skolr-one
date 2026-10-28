@@ -269,7 +269,7 @@ export default function FeesSection({
         </div>
       </details>
 
-      <Button variant="secondary" className="w-full sm:w-auto" onClick={() => window.print()} data-testid="print-statement">
+      <Button variant="secondary" className="w-full sm:w-auto" onClick={() => { document.body.dataset.print = "statement"; window.print(); }} data-testid="print-statement">
         Print statement of account
       </Button>
     </div>

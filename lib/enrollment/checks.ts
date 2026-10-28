@@ -75,17 +75,19 @@ export function totalUnits(subjects: Offering[]): number {
 export interface LoadCheckInput {
   picked: Offering[];
   student: Pick<Student, "completed_codes">;
+  /** Subjects passed with posted grades (see lib/grades passedCodes). */
+  passedCodes?: string[];
   settings: Pick<SchoolSettings, "max_units">;
   /** Seats already used by other enrollments, per offering id. */
   takenCounts: Record<string, number>;
 }
 
-export function checkCollegeLoad({ picked, student, settings, takenCounts }: LoadCheckInput): string[] {
+export function checkCollegeLoad({ picked, student, passedCodes = [], settings, takenCounts }: LoadCheckInput): string[] {
   const warnings: string[] = [];
   if (picked.length === 0) warnings.push("Pick at least one subject.");
 
-  // Prerequisites
-  const passed = new Set(student.completed_codes);
+  // Prerequisites: passed with a posted grade, or credited (transferees).
+  const passed = new Set([...passedCodes, ...student.completed_codes]);
   for (const s of picked) {
     const missing = s.prerequisite_codes.filter((p) => !passed.has(p));
     if (missing.length) {

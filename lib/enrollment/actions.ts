@@ -189,6 +189,7 @@ export function planAction(ctx: PlanContext, input: WithOverride): PlanResult {
         warnings = checkCollegeLoad({
           picked: chosen,
           student: detail.student,
+          passedCodes: detail.passed_codes,
           settings,
           takenCounts: detail.takenCounts,
         });

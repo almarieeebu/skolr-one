@@ -10,6 +10,8 @@ import { PLAN_INFO, feePermissions, peso } from "@/lib/fees";
 import { canUploadPapers } from "@/lib/enrollment/actions";
 import { Section, StatusBadge } from "./ui";
 import FeesSection from "./FeesSection";
+import GradesSection from "./GradesSection";
+import { gradePermissions } from "@/lib/grades";
 import { summaryOf } from "./fees-ui";
 
 const fmtDate = (iso: string | null) =>
@@ -211,6 +213,12 @@ export default function StudentCard({
           defaultOpen={stepIndex(e.status) >= 3 || fees.previous > 0 || !!term.closed_at}
         >
           <FeesSection detail={detail} session={session} store={store} onChanged={onChanged} />
+        </Section>
+      )}
+
+      {gradePermissions(session.actor.role).view && (e.status === "officially_enrolled" || e.status === "withdrawn") && (
+        <Section title="Grades" aside={isCollege ? "Grade slip · GWA" : "Report card"} defaultOpen={e.status === "officially_enrolled"}>
+          <GradesSection detail={detail} session={session} store={store} />
         </Section>
       )}
 

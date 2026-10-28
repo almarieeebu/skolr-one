@@ -22,6 +22,7 @@ import {
 } from "./index";
 import * as seed from "../data/seed";
 import { findSetup } from "../fees";
+import { passedCodes } from "../grades";
 
 // ---------- helpers ----------
 const school: School = structuredClone(seed.school);
@@ -44,6 +45,15 @@ function detailFor(enrollmentId: string): EnrollmentDetail {
     ledger: seed.ledger.filter((r) => r.enrollment_id === e.id),
     payments: seed.payments.filter((p) => p.enrollment_id === e.id),
     history: [],
+    // Passed subjects come from posted grades of the student's other enrollments.
+    passed_codes: passedCodes({
+      enrollments: seed.enrollments.filter((x) => x.student_id === e.student_id && x.id !== e.id),
+      offerings: seed.offerings,
+      loads: seed.enrollmentLoads,
+      sheets: seed.gradeSheets,
+      entries: seed.gradeEntries,
+      settings: seed.gradeSettings,
+    }),
   });
 }
 
@@ -228,7 +238,7 @@ describe("planAction", () => {
     const d = detailFor(byStatus("student_made"));
     const ids = ["GE102", "IT201", "MATH101"].map((c) => subject(c).id);
     const r = planAction(ctx(d, "student"), { type: "set_load", offering_ids: ids });
-    expect(r.ok).toBe(true); // Pedro already passed IT102
+    expect(r.ok).toBe(true); // Pedro passed IT102 last year (posted grade)
     if (r.ok) {
       expect(r.mutations.enrollment.status).toBe("load_set");
       expect(r.mutations.replaceLoads).toHaveLength(3);

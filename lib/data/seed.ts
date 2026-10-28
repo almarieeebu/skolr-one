@@ -40,6 +40,26 @@ import {
   type OrSeries,
   type PaymentMode,
 } from "../fees";
+import {
+  COLLEGE_PERIODS,
+  KINDER_AREA,
+  QUARTERS,
+  defaultGradeSettings,
+  entryGrade,
+  findArea,
+  learningAreasFor,
+  sheetKind,
+  type ChangeGradeRequest,
+  type GradeEntry,
+  type GradeHistoryRow,
+  type GradePeriod,
+  type GradeSettings,
+  type GradeSheet,
+  type K12Component,
+  type KinderMark,
+  type ScoreItem,
+  type SpecialMark,
+} from "../grades";
 
 /** Stable, valid UUIDs so the SQL seed and the demo share ids. */
 const id = (group: string, n: number) =>
@@ -58,9 +78,14 @@ export const profiles: Profile[] = [
   { id: id("a", 4), full_name: "Juan Dela Cruz", email: "juan@sample.edu.ph" },
   { id: id("a", 5), full_name: "Liza Reyes", email: "parent@sample.edu.ph" },
   { id: id("a", 6), full_name: "Danilo Aquino", email: "dean@sample.edu.ph" },
+  // One teacher login per class with grades (Teresa Ramos is the demo teacher).
+  { id: id("a", 7), full_name: "Ramon Bautista", email: "teacher.ge@sample.edu.ph" },
+  { id: id("a", 8), full_name: "Grace Lim", email: "teacher.math@sample.edu.ph" },
+  { id: id("a", 9), full_name: "Joel Santos", email: "teacher.pe@sample.edu.ph" },
+  { id: id("a", 10), full_name: "Mila Cruz", email: "teacher.kinder@sample.edu.ph" },
 ];
 
-const [REGISTRAR, CASHIER, TEACHER, JUAN, PARENT, DEAN] = profiles.map((p) => p.id);
+const [REGISTRAR, CASHIER, TEACHER, JUAN, PARENT, DEAN, T_GE, T_MATH, T_PE, T_KINDER] = profiles.map((p) => p.id);
 
 /** One demo login per role (used by the demo role switcher). */
 export const demoUserByRole: Record<Role, string> = {
@@ -93,6 +118,10 @@ export const memberships: Membership[] = (
     [JUAN, "student"],
     [PARENT, "parent"],
     [DEAN, "dean"],
+    [T_GE, "teacher"],
+    [T_MATH, "teacher"],
+    [T_PE, "teacher"],
+    [T_KINDER, "teacher"],
   ] as [string, Role][]
 ).map(([user_id, role], i) => ({ id: id("ab", i + 1), user_id, school_id: SCHOOL_ID, role }));
 
@@ -117,16 +146,28 @@ type SubjectSeed = [code: string, title: string, units: number, lab: number, day
 const MAJOR_CODES = new Set(["IT101", "IT102", "IT103", "IT201"]);
 
 const subjectSeeds: SubjectSeed[] = [
-  ["GE101", "Understanding the Self", 3, 0, "MWF", "08:00", "09:00", "R101", 40, []],
-  ["GE102", "Purposive Communication", 3, 0, "TTh", "08:00", "09:30", "R102", 40, []],
-  ["MATH101", "Mathematics in the Modern World", 3, 0, "TTh", "13:00", "14:30", "R103", 40, []],
+  ["GE101", "Understanding the Self", 3, 0, "MWF", "08:00", "09:00", "R101", 40, [], T_GE],
+  ["GE102", "Purposive Communication", 3, 0, "TTh", "08:00", "09:30", "R102", 40, [], T_GE],
+  ["MATH101", "Mathematics in the Modern World", 3, 0, "TTh", "13:00", "14:30", "R103", 40, [], T_MATH],
   ["IT101", "Introduction to Computing", 3, 1500, "MWF", "09:00", "10:00", "Lab 1", 35, [], TEACHER],
   ["IT102", "Computer Programming 1", 3, 2000, "TTh", "10:00", "11:30", "Lab 2", 35, [], TEACHER],
-  ["IT103", "Discrete Structures", 3, 0, "MWF", "08:30", "09:30", "R104", 1, []],
+  ["IT103", "Discrete Structures", 3, 0, "MWF", "08:30", "09:30", "R104", 1, [], T_MATH],
   ["IT201", "Computer Programming 2", 3, 2000, "MWF", "13:00", "14:00", "Lab 2", 35, ["IT102"], TEACHER],
-  ["PE1", "Physical Education 1", 2, 0, "S", "08:00", "10:00", "Gym", 60, []],
-  ["NSTP1", "National Service Training Program 1", 3, 0, "S", "10:00", "13:00", "Field", 60, []],
+  ["PE1", "Physical Education 1", 2, 0, "S", "08:00", "10:00", "Gym", 60, [], T_PE],
+  ["NSTP1", "National Service Training Program 1", 3, 0, "S", "10:00", "13:00", "Field", 60, [], T_PE],
 ];
+
+/** 2nd semester subjects. IT201 needs IT102 (passed with a posted grade). */
+const subjectSeeds2nd: SubjectSeed[] = [
+  ["GE103", "Readings in Philippine History", 3, 0, "MWF", "08:00", "09:00", "R101", 40, [], T_GE],
+  ["IT201", "Computer Programming 2", 3, 2000, "MWF", "13:00", "14:00", "Lab 2", 35, ["IT102"], TEACHER],
+  ["IT202", "Data Structures and Algorithms", 3, 0, "TTh", "10:00", "11:30", "Lab 1", 35, ["IT201"], TEACHER],
+  ["PE2", "Physical Education 2", 2, 0, "S", "08:00", "10:00", "Gym", 60, ["PE1"], T_PE],
+  ["NSTP2", "National Service Training Program 2", 3, 0, "S", "10:00", "13:00", "Field", 60, ["NSTP1"], T_PE],
+];
+
+/** Non-credit subjects are left out of the GWA. */
+const NON_CREDIT = new Set(["NSTP1", "NSTP2"]);
 
 type SectionSeed = [code: string, title: string, level: string, strand: string | null, days: string, start: string, end: string, room: string, slots: number, teacher?: string];
 
@@ -136,6 +177,7 @@ const sectionSeeds: SectionSeed[] = [
   ["G7-NARRA", "Grade 7 - Narra", "Grade 7", null, "MTWThF", "07:00", "15:00", "J-7B", 40],
   ["G11-STEM-RIZAL", "Grade 11 STEM - Rizal", "Grade 11", "STEM", "MTWThF", "07:30", "16:00", "S-11A", 2],
   ["G11-ABM-MABINI", "Grade 11 ABM - Mabini", "Grade 11", "ABM", "MTWThF", "07:30", "16:00", "S-11B", 40],
+  ["K-ILANG", "Kinder - Ilang-Ilang", "Kinder", null, "MTWThF", "08:00", "11:00", "K-1", 25, T_KINDER],
 ];
 
 export const offerings: Offering[] = [
@@ -144,7 +186,7 @@ export const offerings: Offering[] = [
     school_id: SCHOOL_ID,
     term_id: TERM_COLLEGE,
     kind: "subject" as const,
-    code, title, units, lab_fee: lab, is_major: MAJOR_CODES.has(code), days, start_time: start, end_time: end, room,
+    code, title, units, lab_fee: lab, is_major: MAJOR_CODES.has(code), non_credit: NON_CREDIT.has(code), days, start_time: start, end_time: end, room,
     teacher_id: teacher ?? null, slots, prerequisite_codes: prereq, level: null, strand: null,
   })),
   // Last year's 2nd semester (closed term): a few subjects for the carried-balance sample.
@@ -155,15 +197,23 @@ export const offerings: Offering[] = [
       school_id: SCHOOL_ID,
       term_id: TERM_PREV,
       kind: "subject" as const,
-      code, title, units, lab_fee: lab, is_major: MAJOR_CODES.has(code), days, start_time: start, end_time: end, room,
+      code, title, units, lab_fee: lab, is_major: MAJOR_CODES.has(code), non_credit: NON_CREDIT.has(code), days, start_time: start, end_time: end, room,
       teacher_id: teacher ?? null, slots, prerequisite_codes: prereq, level: null, strand: null,
     })),
+  ...subjectSeeds2nd.map(([code, title, units, lab, days, start, end, room, slots, prereq, teacher], i) => ({
+    id: id("0f", 200 + i + 1),
+    school_id: SCHOOL_ID,
+    term_id: TERM_COLLEGE_2ND,
+    kind: "subject" as const,
+    code, title, units, lab_fee: lab, is_major: MAJOR_CODES.has(code), non_credit: NON_CREDIT.has(code), days, start_time: start, end_time: end, room,
+    teacher_id: teacher ?? null, slots, prerequisite_codes: prereq, level: null, strand: null,
+  })),
   ...sectionSeeds.map(([code, title, level, strand, days, start, end, room, slots, teacher], i) => ({
     id: id("5e", i + 1),
     school_id: SCHOOL_ID,
     term_id: TERM_K12,
     kind: "section" as const,
-    code, title, units: 0, lab_fee: 0, is_major: false, days, start_time: start, end_time: end, room,
+    code, title, units: 0, lab_fee: 0, is_major: false, non_credit: false, days, start_time: start, end_time: end, room,
     teacher_id: teacher ?? null, slots, prerequisite_codes: [], level, strand,
   })),
 ];
@@ -242,7 +292,7 @@ const samples: Sample[] = [
     docs: ["psa_birth_cert", "form_138", "honorable_dismissal"],
   },
   {
-    student: { first_name: "Pedro", middle_name: "Ramos", last_name: "Garcia", birth_date: "2006-01-20", sex: "M", student_no: "SA-2025-0003", completed_codes: ["GE101", "IT101", "IT102", "PE1"] },
+    student: { first_name: "Pedro", middle_name: "Ramos", last_name: "Garcia", birth_date: "2006-01-20", sex: "M", student_no: "SA-2025-0003" },
     enrollment: { track: "college", status: "student_made", level: "2nd Year", course: "BSIT", student_type: "continuing" },
     docs: [],
   },
@@ -300,6 +350,28 @@ const samples: Sample[] = [
     payments: [[3000, "100101"], [6000, "100142"], [7950, "100177", "bank", "BPI-0425-8812"]],
     term: TERM_PREV,
     day: -140,
+  },
+  // K to 12 learners already in class (grades sample): Grade 7 Sampaguita and Kinder.
+  {
+    student: { first_name: "Paolo", middle_name: "Andres", last_name: "Reyes", birth_date: "2013-09-14", sex: "M", lrn: "136512340004", guardian_user_id: PARENT, student_no: "SA-2025-0010" },
+    enrollment: { track: "k12", status: "officially_enrolled", level: "Grade 7", student_type: "continuing", mother_tongue: "Tagalog", tuition_plan: "quarterly" },
+    docs: ["psa_birth_cert", "form_138"],
+    load: ["G7-SAMPAGUITA"],
+    payments: [[8000, "100212"]],
+  },
+  {
+    student: { first_name: "Andrea", middle_name: "Lopez", last_name: "Cruz", birth_date: "2013-05-03", sex: "F", lrn: "136512340005", student_no: "SA-2025-0011" },
+    enrollment: { track: "k12", status: "officially_enrolled", level: "Grade 7", student_type: "continuing", mother_tongue: "Tagalog", tuition_plan: "annual" },
+    docs: ["psa_birth_cert", "form_138"],
+    load: ["G7-SAMPAGUITA"],
+    payments: [[8000, "100213"]],
+  },
+  {
+    student: { first_name: "Lucas", middle_name: "Tan", last_name: "Garcia", birth_date: "2021-02-19", sex: "M", lrn: "136512340006", student_no: "SA-2025-0012" },
+    enrollment: { track: "k12", status: "officially_enrolled", level: "Kinder", student_type: "continuing", mother_tongue: "Tagalog", tuition_plan: "annual" },
+    docs: ["psa_birth_cert", "form_138"],
+    load: ["K-ILANG"],
+    payments: [[8000, "100214"]],
   },
 ];
 
@@ -491,4 +563,154 @@ samples.forEach((s, i) => {
     const next = enrollments.find((x) => x.student_id === e.student_id && x.term_id === TERM_COLLEGE)!;
     postRows(e, [carryRow(e.id, bal, label), previousBalanceRow(e.id, next.id, bal, label)], REGISTRAR, prevTerm.closed_at!);
   }
+}
+
+// ---------- grades ----------
+// College: Carla (1st sem) has MATH101 posted, GE102 in draft, PE1 with INC
+// and NSTP1 posted (non-credit, left out of the GWA). Pedro's last-year
+// subjects are all posted, so IT102 counts as passed for IT201. One change
+// grade request is waiting for the registrar.
+// K to 12: Grade 7 Sampaguita has Q1 posted (WW/PT/QA scores for every
+// learning area) and Q2 Math and English in draft. Kinder has a Q1 checklist.
+
+const gdate = (month: number, day: number, hour = 9) => new Date(Date.UTC(2026, month - 1, day, hour, 0, 0)).toISOString();
+
+export const gradeSettings: GradeSettings = {
+  ...defaultGradeSettings(SCHOOL_ID),
+  deadlines: [
+    ...COLLEGE_PERIODS.map((period, i) => ({ term_id: TERM_COLLEGE, period, due_date: ["2026-07-18", "2026-08-22", "2026-09-19", "2026-10-24"][i] })),
+    ...COLLEGE_PERIODS.map((period, i) => ({ term_id: TERM_COLLEGE_2ND, period, due_date: ["2026-12-12", "2027-01-30", "2027-03-06", "2027-04-10"][i] })),
+    ...QUARTERS.map((period, i) => ({ term_id: TERM_K12, period, due_date: ["2026-08-28", "2026-11-06", "2027-01-29", "2027-04-02"][i] })),
+  ],
+  updated_at: SETUP_AT,
+};
+
+export const gradeSheets: GradeSheet[] = [];
+export const gradeEntries: GradeEntry[] = [];
+export const scoreItems: ScoreItem[] = [];
+export const gradeHistory: GradeHistoryRow[] = [];
+export const changeRequests: ChangeGradeRequest[] = [];
+
+let sheetN = 0, entryN = 0, itemN = 0, gHistN = 0;
+const enrollmentOf = (first: string, termId: string) =>
+  enrollments.find((e) => e.term_id === termId && students.find((x) => x.id === e.student_id)!.first_name === first)!;
+
+type RowValue = { percent?: number | null; mark?: SpecialMark | null; scores?: (number | null)[]; domains?: Record<string, KinderMark> };
+
+function addSheet(args: {
+  offering: Offering;
+  period: GradePeriod;
+  area?: string;
+  status: "draft" | "posted";
+  when: string;
+  items?: [component: K12Component, label: string, max: number][];
+  rows: [enrollmentId: string, value: RowValue][];
+}) {
+  const o = args.offering;
+  const enr = enrollments.find((e) => e.id === args.rows[0]?.[0]);
+  const area = args.area && enr ? findArea(enr.level, enr.strand, args.area) : undefined;
+  const sheet: GradeSheet = {
+    id: id("65", ++sheetN), school_id: SCHOOL_ID, term_id: o.term_id, offering_id: o.id,
+    learning_area: args.area ?? null, subject_group: area?.group ?? null, period: args.period, status: args.status, teacher_id: o.teacher_id,
+    return_note: null, late_allowed: false,
+    submitted_at: args.status === "posted" ? args.when : null,
+    posted_at: args.status === "posted" ? args.when : null,
+    posted_by: args.status === "posted" ? REGISTRAR : null,
+    updated_at: args.when,
+  };
+  gradeSheets.push(sheet);
+  const items: ScoreItem[] = (args.items ?? []).map(([component, label, max], i) => ({
+    id: id("5c0e", ++itemN), school_id: SCHOOL_ID, sheet_id: sheet.id, component, label, max_score: max, position: i + 1,
+  }));
+  scoreItems.push(...items);
+  const kind = sheetKind(o);
+  for (const [enrollment_id, v] of args.rows) {
+    const scores: Record<string, number | null> = {};
+    items.forEach((it, i) => (scores[it.id] = v.scores?.[i] ?? null));
+    const entry: GradeEntry = {
+      id: id("6e", ++entryN), school_id: SCHOOL_ID, sheet_id: sheet.id, enrollment_id,
+      percent: v.percent ?? null, mark: v.mark ?? null, scores, domains: v.domains ?? {}, grade: null, updated_at: args.when,
+    };
+    entry.grade = entryGrade(kind, entry, items, gradeSettings, area);
+    gradeEntries.push(entry);
+  }
+  if (args.status === "posted") {
+    const teacher = o.teacher_id ?? REGISTRAR;
+    const before = new Date(new Date(args.when).getTime() - 2 * 86400000).toISOString();
+    gradeHistory.push(
+      { id: id("64", ++gHistN), school_id: SCHOOL_ID, sheet_id: sheet.id, entry_id: null, action: "submit", from_status: "draft", to_status: "submitted", note: null, actor_id: teacher, actor_name: nameOf(teacher), created_at: before },
+      { id: id("64", ++gHistN), school_id: SCHOOL_ID, sheet_id: sheet.id, entry_id: null, action: "approve", from_status: "submitted", to_status: "posted", note: null, actor_id: REGISTRAR, actor_name: nameOf(REGISTRAR), created_at: args.when },
+    );
+  }
+  return { sheet, items };
+}
+
+const collegeSubject = (code: string, termId: string, enrollmentId: string, status: "draft" | "posted", values: (number | SpecialMark)[], months: number[][]) =>
+  values.forEach((v, i) => {
+    addSheet({
+      offering: off(code, termId), period: COLLEGE_PERIODS[i], status, when: gdate(months[i][0], months[i][1]) ,
+      rows: [[enrollmentId, typeof v === "number" ? { percent: v } : { mark: v }]],
+    });
+  });
+
+{
+  const carla = enrollmentOf("Carla", TERM_COLLEGE).id;
+  const sem1 = [[7, 20], [8, 24], [9, 21], [10, 26]];
+  collegeSubject("MATH101", TERM_COLLEGE, carla, "posted", [88, 90, 86, 92], sem1);
+  collegeSubject("NSTP1", TERM_COLLEGE, carla, "posted", [95, 94, 96, 95], sem1);
+  collegeSubject("PE1", TERM_COLLEGE, carla, "posted", [90, 92, 88, "INC"], sem1);
+  collegeSubject("GE102", TERM_COLLEGE, carla, "draft", [91, 87], sem1);
+
+  // Pedro, 2025-2026 2nd sem (closed term): everything posted.
+  const pedro = enrollmentOf("Pedro", TERM_PREV).id;
+  const prev = [[1, 10], [2, 14], [3, 14], [5, 25]];
+  const prevDate = (i: number) => new Date(Date.UTC(2026, prev[i][0] - 1, prev[i][1], 9)).toISOString();
+  const prevSubject = (code: string, values: number[]) =>
+    values.forEach((v, i) => addSheet({ offering: off(code, TERM_PREV), period: COLLEGE_PERIODS[i], status: "posted", when: prevDate(i), rows: [[pedro, { percent: v }]] }));
+  prevSubject("GE101", [84, 86, 85, 88]);
+  prevSubject("IT101", [90, 92, 93, 95]);
+  prevSubject("IT102", [82, 85, 80, 84]);
+  prevSubject("PE1", [95, 96, 94, 97]);
+
+  // Pending change grade request: IT101 final, re-checked exam.
+  const it101Final = gradeSheets.find((x) => x.offering_id === off("IT101", TERM_PREV).id && x.period === "final")!;
+  const entry = gradeEntries.find((x) => x.sheet_id === it101Final.id)!;
+  changeRequests.push({
+    id: id("c6", 1), school_id: SCHOOL_ID, sheet_id: it101Final.id, entry_id: entry.id, enrollment_id: pedro,
+    old_value: { percent: 95, mark: null }, new_value: { percent: 98, mark: null },
+    reason: "Final exam re-checked: two answers were marked wrong by mistake.",
+    status: "pending", requested_by: TEACHER, requested_by_name: profiles[2].full_name, requested_at: gdate(6, 20),
+    decided_by: null, decided_at: null, decision_note: null,
+  });
+
+  // K to 12: Grade 7 Sampaguita, Q1 posted for every learning area, Q2 Math and English in draft.
+  const g7 = off("G7-SAMPAGUITA");
+  const learners = enrollments.filter((e) => enrollmentLoads.some((l) => l.enrollment_id === e.id && l.offering_id === g7.id) && e.status === "officially_enrolled");
+  const rnd = (n: number) => ((n * 9301 + 49297) % 233280) / 233280;
+  let k = 0;
+  const score = (max: number) => Math.round(max * (0.66 + 0.32 * rnd(++k * 7 + 3)));
+  const q1Items: [K12Component, string, number][] = [
+    ["ww", "Quiz 1", 20], ["ww", "Quiz 2", 20], ["ww", "Quiz 3", 15],
+    ["pt", "Task 1", 50], ["pt", "Task 2", 50], ["qa", "Quarterly exam", 50],
+  ];
+  for (const a of learningAreasFor("Grade 7")) {
+    addSheet({
+      offering: g7, period: "q1", area: a.code, status: "posted", when: gdate(8, 29), items: q1Items,
+      rows: learners.map((e) => [e.id, { scores: q1Items.map(([, , max]) => score(max)) }]),
+    });
+  }
+  const q2Items: [K12Component, string, number][] = [["ww", "Quiz 1", 20], ["ww", "Quiz 2", 20], ["pt", "Task 1", 50], ["qa", "Quarterly exam", 50]];
+  for (const code of ["MATH", "ENG"]) {
+    addSheet({
+      offering: g7, period: "q2", area: code, status: "draft", when: gdate(10, 15), items: q2Items,
+      rows: learners.map((e) => [e.id, { scores: [score(20), score(20), score(50), null] }]),
+    });
+  }
+
+  // Kinder: Q1 checklist posted.
+  const kinder = off("K-ILANG");
+  addSheet({
+    offering: kinder, period: "q1", area: KINDER_AREA, status: "posted", when: gdate(8, 29),
+    rows: [[enrollmentOf("Lucas", TERM_K12).id, { domains: { SE: "C", PM: "C", CR: "D", MA: "D", EN: "C", LL: "D" } }]],
+  });
 }

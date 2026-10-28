@@ -34,8 +34,31 @@ import {
   type Payment,
 } from "../fees";
 import {
+  defaultGradeSettings,
+  deadlineFor,
+  gradePermissions,
+  passedCodes,
+  planChangeRequest,
+  planSheetAction,
+  validateGradeSettings,
+  type ChangeGradeRequest,
+  type EntryValue,
+  type GradeEntry,
+  type GradeHistoryRow,
+  type GradeSettings,
+  type GradeSheet,
+  type ScoreItem,
+  type SheetActionInput,
+} from "../grades";
+import {
   fullName,
   termLabel,
+  type ClassListItem,
+  type ClassSheetDetail,
+  type GradeResult,
+  type RosterRow,
+  type SheetDraft,
+  type StudentGrades,
   type ClosePreview,
   type DataStore,
   type FeeSetupDraft,
@@ -64,6 +87,21 @@ const numSetup = (s: FeeSetup): FeeSetup => ({
   esc_amount: Number(s.esc_amount),
   shs_voucher_amount: Number(s.shs_voucher_amount),
 });
+
+const numEntry = (g: GradeEntry): GradeEntry => ({
+  ...g,
+  percent: g.percent == null ? null : Number(g.percent),
+  grade: g.grade == null ? null : Number(g.grade),
+  scores: g.scores ?? {},
+  domains: g.domains ?? {},
+});
+const numItem = (i: ScoreItem): ScoreItem => ({ ...i, max_score: Number(i.max_score) });
+const numSettings = (s: GradeSettings): GradeSettings => ({
+  ...s,
+  passing_grade: Number(s.passing_grade),
+  gwa_decimals: Number(s.gwa_decimals),
+});
+const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
 
 export class SupabaseStore implements DataStore {
   readonly mode = "supabase" as const;
@@ -177,7 +215,35 @@ export class SupabaseStore implements DataStore {
       ledger: ((must(ledger) ?? []) as LedgerEntry[]).map(numLedger),
       payments: ((must(payments) ?? []) as Payment[]).map(numPayment),
       history: must(history) ?? [],
+      passed_codes: await this.passedFor(e).catch(() => []),
     } as EnrollmentDetail;
+  }
+
+  /** Subjects passed in the student's OTHER enrollments (posted grades only). */
+  private async passedFor(e: Enrollment): Promise<string[]> {
+    const others = must(
+      await this.sb.from("enrollments").select("id").eq("student_id", e.student_id).neq("id", e.id),
+    ) as { id: string }[];
+    if (!others.length) return [];
+    const loads = must(
+      await this.sb.from("enrollment_loads").select("enrollment_id, offering_id").in("enrollment_id", ids(others)),
+    ) as { enrollment_id: string; offering_id: string }[];
+    const offeringIds = [...new Set(loads.map((l) => l.offering_id))];
+    if (!offeringIds.length) return [];
+    const [offerings, sheets, entries, settings] = await Promise.all([
+      this.sb.from("offerings").select("*").in("id", offeringIds),
+      this.sb.from("grade_sheets").select("*").in("offering_id", offeringIds).eq("status", "posted"),
+      this.sb.from("grade_entries").select("*").in("enrollment_id", ids(others)),
+      this.getGradeSettings(),
+    ]);
+    return passedCodes({
+      enrollments: others,
+      offerings: ((must(offerings) ?? []) as Offering[]).map((o) => ({ ...o, units: Number(o.units) })),
+      loads,
+      sheets: (must(sheets) ?? []) as GradeSheet[],
+      entries: ((must(entries) ?? []) as GradeEntry[]).map(numEntry),
+      settings,
+    });
   }
 
   async listTerms(): Promise<Term[]> {
@@ -417,6 +483,244 @@ export class SupabaseStore implements DataStore {
   async closeTerm(termId: string) {
     const rows = must(await this.sb.rpc("fees_close_term", { p_term: termId })) as { closed: number; total: number }[];
     return { closed: Number(rows?.[0]?.closed ?? 0), total: Number(rows?.[0]?.total ?? 0) };
+  }
+
+  // ----- grades -----
+  // Drafts are written straight to the tables (RLS: only the teacher of the
+  // class, only while the sheet is a draft; the database works out each
+  // grade). Submit / approve / return / allow late and change requests are
+  // database functions that check the role and write the history row.
+
+  private async profileNames(userIds: (string | null)[]): Promise<Record<string, string>> {
+    const list = [...new Set(userIds.filter(Boolean))] as string[];
+    if (!list.length) return {};
+    const rows = must(await this.sb.from("profiles").select("id, full_name").in("id", list)) as { id: string; full_name: string }[];
+    return Object.fromEntries(rows.map((r) => [r.id, r.full_name]));
+  }
+
+  /** Officially enrolled students of these classes (plus anyone already graded). */
+  private async rosters(offeringIds: string[], gradedEnrollments: Set<string> = new Set()) {
+    if (!offeringIds.length) return {} as Record<string, RosterRow[]>;
+    const rows = must(
+      await this.sb
+        .from("enrollment_loads")
+        .select("offering_id, enrollment:enrollments(id, status, level, strand, student:students(id, first_name, middle_name, last_name, student_no))")
+        .in("offering_id", offeringIds),
+    ) as unknown as {
+      offering_id: string;
+      enrollment: { id: string; status: string; level: string; strand: string | null; student: Student } | null;
+    }[];
+    const out: Record<string, RosterRow[]> = {};
+    for (const r of rows) {
+      const e = r.enrollment;
+      if (!e || !(e.status === "officially_enrolled" || gradedEnrollments.has(e.id))) continue;
+      (out[r.offering_id] ??= []).push({
+        enrollment_id: e.id, student_id: e.student.id, name: fullName(e.student), student_no: e.student.student_no,
+        level: e.level, strand: e.strand,
+      });
+    }
+    for (const k of Object.keys(out)) out[k].sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  }
+
+  async listClasses(): Promise<ClassListItem[]> {
+    const { actor, school } = await this.me();
+    if (!gradePermissions(actor.role).classes) return [];
+    let q = this.sb.from("offerings").select("*").eq("school_id", school.id);
+    if (actor.role === "teacher") q = q.eq("teacher_id", actor.user_id);
+    const offerings = must(await q) as Offering[];
+    const oids = offerings.map((o) => o.id);
+    if (!oids.length) return [];
+    const [terms, sheets, requests, roster] = await Promise.all([
+      this.listAllTerms(),
+      this.sb.from("grade_sheets").select("id, offering_id, status").in("offering_id", oids),
+      this.sb.from("change_grade_requests").select("sheet_id").eq("status", "pending"),
+      this.rosters(oids),
+    ]);
+    const sheetRows = (must(sheets) ?? []) as Pick<GradeSheet, "id" | "offering_id" | "status">[];
+    const pendingRows = (must(requests) ?? []) as { sheet_id: string }[];
+    const names = await this.profileNames(offerings.map((o) => o.teacher_id));
+    const useDean = school.settings.use_dean_approval;
+    const items: ClassListItem[] = [];
+    for (const o of offerings) {
+      const students = roster[o.id]?.length ?? 0;
+      if (actor.role !== "teacher" && students === 0) continue;
+      const mine = sheetRows.filter((s) => s.offering_id === o.id);
+      const submitted = mine.filter((s) => s.status === "submitted").length;
+      const returned = mine.filter((s) => s.status === "returned").length;
+      const pending = pendingRows.filter((r) => mine.some((s) => s.id === r.sheet_id)).length;
+      const t = terms.find((x) => x.id === o.term_id)!;
+      items.push({
+        offering_id: o.id, kind: o.kind, code: o.code, title: o.title, term_id: o.term_id, term_label: t ? termLabel(t) : "",
+        level: o.level, teacher_name: o.teacher_id ? names[o.teacher_id] ?? null : null, students,
+        submitted, returned, pending_changes: pending,
+        waiting:
+          actor.role === "teacher" ? returned > 0
+          : actor.role === "registrar" ? (!useDean && submitted > 0) || pending > 0
+          : actor.role === "dean" ? useDean && submitted > 0 : false,
+      });
+    }
+    const closed = (i: ClassListItem) => (terms.find((t) => t.id === i.term_id)?.closed_at ? 1 : 0);
+    return items.sort((x, y) => Number(y.waiting) - Number(x.waiting) || closed(x) - closed(y) || x.code.localeCompare(y.code));
+  }
+
+  async getClassSheet(offeringId: string): Promise<ClassSheetDetail | null> {
+    const { actor } = await this.me();
+    if (!gradePermissions(actor.role).classes) return null;
+    const o = must(await this.sb.from("offerings").select("*").eq("id", offeringId).maybeSingle()) as Offering | null;
+    if (!o) return null;
+    const teaches = o.teacher_id === actor.user_id;
+    if (actor.role === "teacher" && !teaches) return null;
+    const sheets = (must(await this.sb.from("grade_sheets").select("*").eq("offering_id", o.id)) ?? []) as GradeSheet[];
+    const sids = ids(sheets);
+    const none = { data: [], error: null };
+    const [term, entries, items, requests, history, settings, names] = await Promise.all([
+      this.sb.from("terms").select("*").eq("id", o.term_id).single(),
+      sids.length ? this.sb.from("grade_entries").select("*").in("sheet_id", sids) : none,
+      sids.length ? this.sb.from("k12_score_items").select("*").in("sheet_id", sids).order("position") : none,
+      sids.length ? this.sb.from("change_grade_requests").select("*").in("sheet_id", sids).order("requested_at") : none,
+      sids.length ? this.sb.from("grade_history").select("*").in("sheet_id", sids).order("created_at") : none,
+      this.getGradeSettings(),
+      this.profileNames([o.teacher_id]),
+    ]);
+    const entryRows = ((must(entries) ?? []) as GradeEntry[]).map(numEntry);
+    const roster = await this.rosters([o.id], new Set(entryRows.map((g) => g.enrollment_id)));
+    return {
+      offering: { ...o, units: Number(o.units), lab_fee: Number(o.lab_fee) },
+      term: must(term) as Term,
+      teacher_name: o.teacher_id ? names[o.teacher_id] ?? null : null,
+      teaches,
+      roster: roster[o.id] ?? [],
+      sheets,
+      entries: entryRows,
+      items: ((must(items) ?? []) as ScoreItem[]).map(numItem),
+      requests: (must(requests) ?? []) as ChangeGradeRequest[],
+      history: (must(history) ?? []) as GradeHistoryRow[],
+      settings,
+    };
+  }
+
+  async saveGradeSheet(d: SheetDraft): Promise<GradeResult> {
+    const { actor, school } = await this.me();
+    const o = must(await this.sb.from("offerings").select("*").eq("id", d.offering_id).single()) as Offering;
+    let q = this.sb.from("grade_sheets").select("*").eq("offering_id", o.id).eq("period", d.period);
+    q = d.learning_area ? q.eq("learning_area", d.learning_area) : q.is("learning_area", null);
+    let sheet = must(await q.maybeSingle()) as GradeSheet | null;
+    const settings = await this.getGradeSettings();
+    const plan = planSheetAction(
+      {
+        actor,
+        sheet: sheet ?? { status: "draft", late_allowed: false },
+        teachesClass: actor.role === "teacher" && o.teacher_id === actor.user_id,
+        useDean: school.settings.use_dean_approval,
+        deadline: deadlineFor(settings, o.term_id, d.period),
+        now: new Date().toISOString(),
+      },
+      { type: "save" },
+    );
+    if (!plan.ok) return plan;
+    try {
+      if (!sheet) {
+        sheet = must(
+          await this.sb
+            .from("grade_sheets")
+            .insert({
+              school_id: school.id, term_id: o.term_id, offering_id: o.id, learning_area: d.learning_area,
+              subject_group: d.subject_group, period: d.period, teacher_id: actor.user_id,
+            })
+            .select("*")
+            .single(),
+        ) as GradeSheet;
+      } else {
+        must(await this.sb.from("grade_sheets").update({ updated_at: new Date().toISOString() }).eq("id", sheet.id));
+      }
+      const sid = sheet.id;
+      // Items first: the database works out each grade from them.
+      const keep = d.items.map((i) => i.id);
+      const del = this.sb.from("k12_score_items").delete().eq("sheet_id", sid);
+      must(await (keep.length ? del.not("id", "in", `(${keep.join(",")})`) : del));
+      if (d.items.length) {
+        must(await this.sb.from("k12_score_items").upsert(
+          d.items.map((i) => ({ ...i, max_score: Number(i.max_score) || 0, school_id: school.id, sheet_id: sid })),
+        ));
+      }
+      if (d.entries.length) {
+        must(await this.sb.from("grade_entries").upsert(
+          d.entries.map((e) => ({ ...e, school_id: school.id, sheet_id: sid })),
+          { onConflict: "sheet_id,enrollment_id" },
+        ));
+      }
+      return { ok: true, sheet_id: sid };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  async runSheetAction(sheetId: string, input: SheetActionInput): Promise<GradeResult> {
+    if (input.type === "save") return { ok: true, sheet_id: sheetId };
+    const res = await this.sb.rpc("grades_sheet_action", {
+      p_sheet: sheetId, p_action: input.type, p_note: input.type === "return" ? input.note : null,
+    });
+    return res.error ? { ok: false, error: res.error.message } : { ok: true, sheet_id: sheetId };
+  }
+
+  async requestGradeChange(entryId: string, newValue: EntryValue, reason: string): Promise<GradeResult> {
+    const { actor } = await this.me();
+    const g = must(await this.sb.from("grade_entries").select("*").eq("id", entryId).single()) as GradeEntry;
+    const sheet = must(await this.sb.from("grade_sheets").select("*").eq("id", g.sheet_id).single()) as GradeSheet;
+    const o = must(await this.sb.from("offerings").select("teacher_id").eq("id", sheet.offering_id).single()) as { teacher_id: string | null };
+    const pending = (must(await this.sb.from("change_grade_requests").select("entry_id, status").eq("entry_id", entryId)) ?? []) as ChangeGradeRequest[];
+    // Friendly checks first; the database checks again.
+    const plan = planChangeRequest(
+      {
+        actor, sheet, teachesClass: actor.role === "teacher" && o.teacher_id === actor.user_id,
+        entry: { id: g.id, enrollment_id: g.enrollment_id, value: { percent: g.percent == null ? null : Number(g.percent), mark: g.mark, ...(newValue.scores ? { scores: g.scores } : {}) } },
+        pending, now: new Date().toISOString(),
+      },
+      { new_value: newValue, reason },
+    );
+    if (!plan.ok) return plan;
+    const res = await this.sb.rpc("grades_request_change", {
+      p_entry: entryId, p_percent: newValue.percent, p_mark: newValue.mark, p_scores: newValue.scores ?? null, p_reason: reason,
+    });
+    return res.error ? { ok: false, error: res.error.message } : { ok: true, sheet_id: sheet.id };
+  }
+
+  async decideGradeChange(requestId: string, approve: boolean, note: string): Promise<GradeResult> {
+    const res = await this.sb.rpc("grades_decide_change", { p_request: requestId, p_approve: approve, p_note: note || null });
+    return res.error ? { ok: false, error: res.error.message } : { ok: true };
+  }
+
+  async getStudentGrades(enrollmentId: string): Promise<StudentGrades | null> {
+    const { actor } = await this.me();
+    const perms = gradePermissions(actor.role);
+    if (!perms.view) return null;
+    const loads = (must(await this.sb.from("enrollment_loads").select("offering_id").eq("enrollment_id", enrollmentId)) ?? []) as { offering_id: string }[];
+    const settings = await this.getGradeSettings();
+    if (!loads.length) return { settings, sheets: [], entries: [] };
+    // RLS: students / parents get posted sheets only; teachers their own classes.
+    let sq = this.sb.from("grade_sheets").select("*").in("offering_id", loads.map((l) => l.offering_id));
+    if (perms.postedOnly) sq = sq.eq("status", "posted");
+    const sheets = (must(await sq) ?? []) as GradeSheet[];
+    if (!sheets.length) return { settings, sheets: [], entries: [] };
+    const entries = (must(await this.sb.from("grade_entries").select("*").eq("enrollment_id", enrollmentId).in("sheet_id", ids(sheets))) ?? []) as GradeEntry[];
+    return { settings, sheets, entries: entries.map(numEntry) };
+  }
+
+  async getGradeSettings(): Promise<GradeSettings> {
+    const { school } = await this.me();
+    const row = must(await this.sb.from("grade_settings").select("*").eq("school_id", school.id).maybeSingle()) as GradeSettings | null;
+    return row ? numSettings(row) : defaultGradeSettings(school.id);
+  }
+
+  async saveGradeSettings(s: GradeSettings): Promise<void> {
+    const { school } = await this.me();
+    const problems = validateGradeSettings(s);
+    if (problems.length) throw new Error(problems.join(" "));
+    const { school_id: _skip, ...row } = s;
+    void _skip;
+    // RLS: only the registrar may update the school's grade settings.
+    must(await this.sb.from("grade_settings").update({ ...row, updated_at: new Date().toISOString() }).eq("school_id", school.id));
   }
 
   async uploadDocument(enrollmentId: string, type: DocType, file: File) {
