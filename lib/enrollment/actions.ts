@@ -86,13 +86,15 @@ export function allowedActions(
     case "parent":
       return s === "student_made" || s === "load_set" ? ["set_load"] : [];
     case "teacher":
+    case "applicant":
+      // Applicants use the portal: details, papers and follow-up requests.
       return [];
   }
 }
 
-/** Students and parents can add papers while the application is still open. */
+/** Applicants, students and parents can add papers while the application is still open. */
 export function canUploadPapers(role: Role, status: Status): boolean {
-  return (role === "student" || role === "parent" || role === "registrar") && status === "applied";
+  return (role === "applicant" || role === "student" || role === "parent" || role === "registrar") && status === "applied";
 }
 
 /** The changes to save. Stores apply these in order. */

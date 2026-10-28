@@ -15,6 +15,7 @@ export const DOC_LABEL: Record<DocType, string> = {
   form_138: "Form 138 (report card)",
   honorable_dismissal: "Honorable dismissal",
   tor: "Transcript of records (TOR)",
+  photo: "Student picture",
 };
 
 /** Which papers an applicant must submit. */

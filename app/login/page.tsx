@@ -1,17 +1,19 @@
 "use client";
 
-// Email + password sign-in (Supabase mode). In demo mode it just links home.
+// Sign-in (Supabase mode) with an email, an applicant number (APP-2026-00012)
+// or a student number (SA-2026-0005). Applicants go on to their portal.
+// In demo mode it just links home.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { isDemoMode } from "@/lib/config";
-import { createClient } from "@/lib/supabase/client";
+import { SupabaseStore } from "@/lib/data/supabase-store";
 import { Button, Field, inputClass } from "@/components/ui";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -27,6 +29,10 @@ export default function LoginPage() {
           <Link href="/" className="mt-4 inline-block text-sm font-medium text-brand underline">
             Open the app
           </Link>
+          <p className="mt-3 text-sm text-muted">
+            Applicants: <Link href="/portal" className="font-medium text-brand underline">Applicant Portal</Link> ·{" "}
+            <Link href="/apply" className="font-medium text-brand underline">Enroll online</Link>
+          </p>
         </div>
       </main>
     );
@@ -36,12 +42,15 @@ export default function LoginPage() {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const { error } = await createClient().auth.signInWithPassword({ email, password });
-    setBusy(false);
-    if (error) setError(error.message);
-    else {
-      router.replace("/");
+    try {
+      const store = new SupabaseStore();
+      await store.signIn(login, password);
+      const s = await store.getSession();
+      router.replace(s?.actor.role === "applicant" ? "/portal" : "/");
       router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
     }
   };
 
@@ -52,8 +61,8 @@ export default function LoginPage() {
           <h1 className="text-lg font-semibold">Sign in</h1>
           <p className="text-sm text-muted">School enrollment</p>
         </div>
-        <Field label="Email">
-          <input type="email" required autoComplete="email" className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Field label="Email, applicant number or student number">
+          <input required autoComplete="username" placeholder="name@school.edu.ph or APP-2026-00012" className={inputClass} value={login} onChange={(e) => setLogin(e.target.value)} />
         </Field>
         <Field label="Password">
           <input type="password" required autoComplete="current-password" className={inputClass} value={password} onChange={(e) => setPassword(e.target.value)} />
@@ -62,6 +71,9 @@ export default function LoginPage() {
         <Button type="submit" disabled={busy} className="w-full">
           {busy ? "Signing in…" : "Sign in"}
         </Button>
+        <p className="text-center text-xs text-muted">
+          New student? <Link href="/apply" className="font-medium text-brand underline">Enroll online</Link>
+        </p>
       </form>
     </main>
   );

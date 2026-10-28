@@ -5,6 +5,8 @@ drop policy if exists "documents bucket read" on storage.objects;
 drop policy if exists "documents bucket upload" on storage.objects;
 drop schema if exists public cascade;
 delete from auth.users where email like '%@sample.edu.ph';
+-- Applicant accounts made without an email (app-2026-00012@applicants.sa.local).
+delete from auth.users where email like '%@applicants.%.local';
 create schema public;
 grant usage on schema public to postgres, anon, authenticated, service_role;
 grant all on schema public to postgres, anon, authenticated, service_role;

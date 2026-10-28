@@ -30,6 +30,7 @@ import type {
   SheetActionInput,
   SubjectGroup,
 } from "../grades";
+import type { ApplicationForm, DetailsChange, RequestType } from "../applicant";
 
 export interface SessionInfo {
   actor: Actor;
@@ -164,6 +165,53 @@ export interface StudentGrades {
 
 export type GradeResult = { ok: true; sheet_id?: string } | { ok: false; error: string };
 
+// ----- applicant portal -----
+
+/** What the public enrollment form (/apply) needs: the school and its open terms. */
+export interface ApplyInfo {
+  school: Pick<School, "id" | "name" | "code" | "logo_url">;
+  terms: Term[];
+}
+
+export interface PublicApplicationInput {
+  /** School code from the URL (/apply/SA). Null = the only school. */
+  school_code: string | null;
+  form: ApplicationForm;
+  files: { type: DocType; file: File }[];
+}
+
+/** Shown once on the success screen of the form. */
+export interface ApplicantCredentials {
+  full_name: string;
+  school_name: string;
+  applicant_no: string;
+  /** Temporary password (the applicant must change it on the first sign-in). */
+  password: string;
+  /** The email the account uses, when the applicant gave one. */
+  email: string | null;
+  /**
+   * demo: demo mode, nothing is sent.
+   * confirm: Supabase sent a "confirm your email" message; confirm before signing in.
+   * none: no email was sent (sign in with the applicant number).
+   */
+  email_note: "demo" | "confirm" | "none";
+  /** False when the papers could not be uploaded yet (upload them in the portal). */
+  papers_uploaded: boolean;
+  /** Extra plain-language note (e.g. "this email already has an account"). */
+  notice: string | null;
+}
+
+/** Everything the applicant portal shows. */
+export interface PortalData {
+  session: SessionInfo;
+  must_change_password: boolean;
+  applicant_no: string | null;
+  /** The applicant's latest enrollment (null if none, e.g. a staff login). */
+  detail: EnrollmentDetail | null;
+}
+
+export type SimpleResult = { ok: true; message?: string } | { ok: false; error: string };
+
 export interface DataStore {
   readonly mode: "demo" | "supabase";
   getSession(): Promise<SessionInfo | null>;
@@ -206,6 +254,23 @@ export interface DataStore {
   getStudentGrades(enrollmentId: string): Promise<StudentGrades | null>;
   getGradeSettings(): Promise<GradeSettings>;
   saveGradeSettings(s: GradeSettings): Promise<void>;
+
+  // ----- applicant portal -----
+  /** Public (no login): the school and open terms for the enrollment form. */
+  getApplyInfo(schoolCode: string | null): Promise<ApplyInfo>;
+  /** Public (no login): send the form; creates the application and a temporary applicant account. */
+  submitPublicApplication(input: PublicApplicationInput): Promise<ApplicantCredentials>;
+  /** Sign in with an email, an applicant number or a student number. */
+  signIn(login: string, password: string): Promise<void>;
+  getPortal(): Promise<PortalData | null>;
+  /** Applicant: change own details while the application is still "applied". */
+  updateApplicantDetails(enrollmentId: string, change: DetailsChange): Promise<SimpleResult>;
+  createApplicantRequest(enrollmentId: string, type: RequestType, message: string): Promise<SimpleResult>;
+  /** Registrar: reply to a request (and close it if `close`). */
+  answerApplicantRequest(requestId: string, reply: string, close: boolean): Promise<SimpleResult>;
+  closeApplicantRequest(requestId: string): Promise<SimpleResult>;
+  /** Change own password (clears the "must change password" flag). */
+  changePassword(next: string): Promise<void>;
 }
 
 /** Extra controls only the demo store has. */

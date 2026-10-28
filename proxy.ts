@@ -1,5 +1,9 @@
 // Next.js 16 "proxy" (formerly middleware): keeps the Supabase session
 // cookie fresh and sends signed-out users to /login. Does nothing in demo mode.
+// Public pages: /login, the enrollment form (/apply, /api/apply) and the
+// applicant portal (/portal has its own sign-in box).
+
+const PUBLIC = ["/login", "/apply", "/api/apply", "/portal"];
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
@@ -22,8 +26,9 @@ export async function proxy(request: NextRequest) {
   });
 
   const { data } = await supabase.auth.getUser();
-  const onLogin = request.nextUrl.pathname.startsWith("/login");
-  if (!data.user && !onLogin) {
+  const path = request.nextUrl.pathname;
+  const isPublic = PUBLIC.some((p) => path === p || path.startsWith(`${p}/`));
+  if (!data.user && !isPublic) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
   return response;

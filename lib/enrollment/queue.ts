@@ -8,6 +8,8 @@ export interface QueueItem {
   fix_note: string | null;
   balance: number;
   updated_at: string;
+  /** Applicant follow-up requests waiting for a reply (registrar only). */
+  open_requests?: number;
 }
 
 /** Is this enrollment waiting on the given role to do something? */
@@ -18,6 +20,7 @@ export function isWaitingOn(
 ): boolean {
   switch (role) {
     case "registrar":
+      if ((item.open_requests ?? 0) > 0) return true;
       if (item.status === "assessed_paid") {
         return !settings.use_dean_approval || item.dean_approved;
       }
@@ -29,6 +32,8 @@ export function isWaitingOn(
     case "student":
     case "parent":
       return item.status === "student_made" || (item.status === "applied" && !!item.fix_note);
+    case "applicant":
+      return item.status === "applied" && !!item.fix_note;
     case "teacher":
       return false;
   }
@@ -71,6 +76,7 @@ export function canSee(
     case "dean":
       return true;
     case "student":
+    case "applicant":
       return student.user_id === userId;
     case "parent":
       return (
