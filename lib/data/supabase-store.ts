@@ -3,6 +3,10 @@
 // Everything about money is posted by database functions (0002_fees.sql):
 // fees_assess, fees_take_payment, fees_apply_discount, fees_void_payment,
 // fees_close_term. The browser never writes fee rows itself.
+// Every other user action that writes more than one row is ONE database
+// function too (0005_security.sql), so it is saved completely or not at all:
+// enrollment_create, enrollment_apply, document_record, fees_save_setup,
+// grades_save_draft.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "../supabase/client";
@@ -21,6 +25,7 @@ import { isWaitingOn, sortForRole } from "../enrollment/queue";
 import { nextSeq } from "../enrollment/ids";
 import { DOC_LABEL } from "../enrollment/checks";
 import { checkNewPassword, loginKind, planDetailsUpdate, type ApplicantRequest, type DetailsChange, type RequestType } from "../applicant";
+import { SIGN_IN_FAILED } from "../account";
 import {
   balance,
   findSetup,
@@ -273,42 +278,25 @@ export class SupabaseStore implements DataStore {
   }
 
   async createApplication(input: NewApplicationInput): Promise<string> {
-    const { actor, school } = await this.me();
-    let student: Student | null = null;
-    if (input.existing_student_id) {
-      student = must(await this.sb.from("students").select("*").eq("id", input.existing_student_id).single()) as Student;
-    } else {
-      student = must(
-        await this.sb
-          .from("students")
-          .insert({
-            school_id: school.id,
-            lrn: input.lrn || null,
-            first_name: input.first_name,
-            middle_name: input.middle_name || null,
-            last_name: input.last_name,
-            birth_date: input.birth_date || null,
-            sex: input.sex || null,
-            user_id: actor.role === "student" ? actor.user_id : null,
-            guardian_user_id: actor.role === "parent" ? actor.user_id : null,
-          })
-          .select("*")
-          .single(),
-      ) as Student;
-      if (actor.role === "parent") {
-        must(await this.sb.from("parent_links").insert({ school_id: school.id, parent_user_id: actor.user_id, student_id: student.id }));
-      }
-    }
-    const returning = !!student.student_no;
-    const e = must(
-      await this.sb
-        .from("enrollments")
-        .insert({
-          school_id: school.id,
-          term_id: input.term_id,
-          student_id: student.id,
+    const { actor } = await this.me();
+    // Student (new ones only), parent link, enrollment and the first history row in one transaction.
+    const id = must(
+      await this.sb.rpc("enrollment_create", {
+        p_term: input.term_id,
+        p_existing_student: input.existing_student_id || null,
+        p_as: actor.role,
+        p_student: input.existing_student_id
+          ? null
+          : {
+              lrn: input.lrn || null,
+              first_name: input.first_name,
+              middle_name: input.middle_name || null,
+              last_name: input.last_name,
+              birth_date: input.birth_date || null,
+              sex: input.sex || null,
+            },
+        p_fields: {
           track: input.track,
-          status: returning ? "student_made" : "applied",
           level: input.level,
           course: input.track === "college" ? input.course || null : null,
           strand: input.track === "k12" ? input.strand || null : null,
@@ -318,24 +306,12 @@ export class SupabaseStore implements DataStore {
           ip_group: input.ip_group || null,
           is_4ps: input.is_4ps,
           tuition_plan: input.track === "k12" ? input.tuition_plan : null,
-        })
-        .select("id")
-        .single(),
-    ) as { id: string };
-    must(
-      await this.sb.from("enrollment_history").insert({
-        school_id: school.id,
-        enrollment_id: e.id,
-        from_status: null,
-        to_status: returning ? "student_made" : "applied",
-        action: returning ? "returning" : "submit",
-        reason: returning ? "Returning student - starts at the load step" : null,
-        actor_id: actor.user_id,
-        actor_name: `${actor.name} (${actor.role})`,
+        },
       }),
-    );
-    for (const f of input.files) await this.uploadDocument(e.id, f.type, f.file);
-    return e.id;
+    ) as string;
+    // Each paper is its own upload (a file cannot be part of a database transaction).
+    for (const f of input.files) await this.uploadDocument(id, f.type, f.file);
+    return id;
   }
 
   async runAction(enrollmentId: string, input: WithOverride): Promise<PlanResult> {
@@ -373,25 +349,27 @@ export class SupabaseStore implements DataStore {
   }
 
   /**
-   * Save planned changes. MVP note: these are separate requests, not one
-   * transaction; a later version can move this into a Postgres function.
+   * Save the planned changes in ONE transaction (enrollment_apply checks the
+   * role again, like the row security rules). Charges are worked out by the
+   * database from the saved load and the fee setup (the planned rows in
+   * m.postLedger are only used in demo mode).
    */
   private async apply(detail: EnrollmentDetail, m: Mutations) {
-    const eid = detail.enrollment.id;
-    const school_id = detail.enrollment.school_id;
-    if (m.student) must(await this.sb.from("students").update(m.student).eq("id", detail.student.id));
-    if (m.checkAllDocs) must(await this.sb.from("documents").update({ checked: true }).eq("enrollment_id", eid));
-    if (m.replaceLoads) {
-      must(await this.sb.from("enrollment_loads").delete().eq("enrollment_id", eid));
-      if (m.replaceLoads.length) {
-        must(await this.sb.from("enrollment_loads").insert(m.replaceLoads.map((offering_id) => ({ school_id, enrollment_id: eid, offering_id }))));
-      }
-    }
-    must(await this.sb.from("enrollments").update(m.enrollment).eq("id", eid));
-    // Charges are worked out by the database from the saved load and the fee
-    // setup (the planned rows in m.postLedger are only used in demo mode).
-    if (m.postLedger) must(await this.sb.rpc("fees_assess", { p_enrollment: eid }));
-    must(await this.sb.from("enrollment_history").insert({ school_id, enrollment_id: eid, ...m.history }));
+    const { status, fix_note, dean_approved, overrides } = m.enrollment;
+    const fields = Object.fromEntries(
+      Object.entries({ status, fix_note, dean_approved, overrides }).filter(([k]) => k in m.enrollment),
+    );
+    must(
+      await this.sb.rpc("enrollment_apply", {
+        p_enrollment: detail.enrollment.id,
+        p_student: m.student ?? null,
+        p_check_docs: !!m.checkAllDocs,
+        p_loads: m.replaceLoads ?? null,
+        p_fields: fields,
+        p_assess: !!m.postLedger,
+        p_history: { from_status: m.history.from_status, to_status: m.history.to_status, action: m.history.action, reason: m.history.reason },
+      }),
+    );
   }
 
   // ----- fees -----
@@ -414,14 +392,13 @@ export class SupabaseStore implements DataStore {
   async saveFeeSetup(setup: FeeSetupDraft, subjects: SubjectFeeEdit[]) {
     const problems = validateSetup(setup);
     if (problems.length) throw new Error(problems.join(" "));
-    // RLS: only the registrar may write fee setups and offerings.
-    const { id, ...row } = setup;
-    const payload = { ...row, updated_at: new Date().toISOString() };
-    if (id) must(await this.sb.from("fee_setups").update(payload).eq("id", id));
-    else must(await this.sb.from("fee_setups").insert(payload));
-    for (const sub of subjects) {
-      must(await this.sb.from("offerings").update({ lab_fee: Number(sub.lab_fee) || 0, is_major: sub.is_major }).eq("id", sub.id));
-    }
+    // One transaction; only the registrar may save (fees_save_setup checks).
+    must(
+      await this.sb.rpc("fees_save_setup", {
+        p_setup: setup,
+        p_subjects: subjects.map((sub) => ({ id: sub.id, lab_fee: Number(sub.lab_fee) || 0, is_major: sub.is_major })),
+      }),
+    );
   }
 
   async getOrSeries(): Promise<OrSeries> {
@@ -500,8 +477,8 @@ export class SupabaseStore implements DataStore {
   }
 
   // ----- grades -----
-  // Drafts are written straight to the tables (RLS: only the teacher of the
-  // class, only while the sheet is a draft; the database works out each
+  // A draft is saved by grades_save_draft in one transaction (only the teacher
+  // of the class, only while the sheet is a draft; the database works out each
   // grade). Submit / approve / return / allow late and change requests are
   // database functions that check the role and write the history row.
 
@@ -619,7 +596,7 @@ export class SupabaseStore implements DataStore {
     const o = must(await this.sb.from("offerings").select("*").eq("id", d.offering_id).single()) as Offering;
     let q = this.sb.from("grade_sheets").select("*").eq("offering_id", o.id).eq("period", d.period);
     q = d.learning_area ? q.eq("learning_area", d.learning_area) : q.is("learning_area", null);
-    let sheet = must(await q.maybeSingle()) as GradeSheet | null;
+    const sheet = must(await q.maybeSingle()) as GradeSheet | null;
     const settings = await this.getGradeSettings();
     const plan = planSheetAction(
       {
@@ -633,41 +610,17 @@ export class SupabaseStore implements DataStore {
       { type: "save" },
     );
     if (!plan.ok) return plan;
-    try {
-      if (!sheet) {
-        sheet = must(
-          await this.sb
-            .from("grade_sheets")
-            .insert({
-              school_id: school.id, term_id: o.term_id, offering_id: o.id, learning_area: d.learning_area,
-              subject_group: d.subject_group, period: d.period, teacher_id: actor.user_id,
-            })
-            .select("*")
-            .single(),
-        ) as GradeSheet;
-      } else {
-        must(await this.sb.from("grade_sheets").update({ updated_at: new Date().toISOString() }).eq("id", sheet.id));
-      }
-      const sid = sheet.id;
-      // Items first: the database works out each grade from them.
-      const keep = d.items.map((i) => i.id);
-      const del = this.sb.from("k12_score_items").delete().eq("sheet_id", sid);
-      must(await (keep.length ? del.not("id", "in", `(${keep.join(",")})`) : del));
-      if (d.items.length) {
-        must(await this.sb.from("k12_score_items").upsert(
-          d.items.map((i) => ({ ...i, max_score: Number(i.max_score) || 0, school_id: school.id, sheet_id: sid })),
-        ));
-      }
-      if (d.entries.length) {
-        must(await this.sb.from("grade_entries").upsert(
-          d.entries.map((e) => ({ ...e, school_id: school.id, sheet_id: sid })),
-          { onConflict: "sheet_id,enrollment_id" },
-        ));
-      }
-      return { ok: true, sheet_id: sid };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    // Sheet, activities and grades in one transaction (activities first: the
+    // database works out each grade from them).
+    const res = await this.sb.rpc("grades_save_draft", {
+      p_offering: o.id,
+      p_period: d.period,
+      p_learning_area: d.learning_area,
+      p_subject_group: d.subject_group,
+      p_items: d.items.map((i) => ({ ...i, max_score: Number(i.max_score) || 0 })),
+      p_entries: d.entries,
+    });
+    return res.error ? { ok: false, error: res.error.message } : { ok: true, sheet_id: res.data as string };
   }
 
   async runSheetAction(sheetId: string, input: SheetActionInput): Promise<GradeResult> {
@@ -738,29 +691,13 @@ export class SupabaseStore implements DataStore {
   }
 
   async uploadDocument(enrollmentId: string, type: DocType, file: File) {
-    const { school, actor } = await this.me();
-    const e = must(await this.sb.from("enrollments").select("status").eq("id", enrollmentId).single()) as Pick<Enrollment, "status">;
+    const { school } = await this.me();
     const path = `${school.id}/${enrollmentId}/${type}-${Date.now()}-${file.name}`;
+    // The file goes to storage first; the document row and the history row are one transaction.
     must(await this.sb.storage.from(BUCKET).upload(path, file, { upsert: true }));
     must(
-      await this.sb.from("documents").upsert(
-        {
-          school_id: school.id,
-          enrollment_id: enrollmentId,
-          type,
-          file_name: file.name,
-          file_path: path,
-          checked: false,
-          uploaded_at: new Date().toISOString(),
-        },
-        { onConflict: "enrollment_id,type" },
-      ),
-    );
-    must(
-      await this.sb.from("enrollment_history").insert({
-        school_id: school.id, enrollment_id: enrollmentId, from_status: e.status, to_status: e.status,
-        action: "upload_paper", reason: `${DOC_LABEL[type]} uploaded (${file.name})`,
-        actor_id: actor.user_id, actor_name: `${actor.name} (${actor.role})`,
+      await this.sb.rpc("document_record", {
+        p_enrollment: enrollmentId, p_type: type, p_file_name: file.name, p_path: path, p_label: DOC_LABEL[type],
       }),
     );
   }
@@ -795,17 +732,19 @@ export class SupabaseStore implements DataStore {
   async signIn(login: string, password: string) {
     let email = login.trim().toLowerCase();
     if (loginKind(email) !== "email") {
-      // Applicant number or student number -> the account's email (security-definer function).
-      const found = must(await this.sb.rpc("login_email", { p_login: login.trim() })) as string | null;
-      if (!found) throw new Error("We could not find that number. Check it and try again (e.g. APP-2026-00012).");
-      email = found;
+      // Applicant number or student number -> the account's email. The database
+      // only answers when the password is right (0005_security.sql), so a number
+      // never reveals an email, and an unknown number looks like a wrong password.
+      const res = await this.sb.rpc("login_email", { p_login: login.trim(), p_password: password });
+      if (res.error || !res.data) throw new Error(SIGN_IN_FAILED);
+      email = res.data as string;
     }
     const { error } = await this.sb.auth.signInWithPassword({ email, password });
     if (error) {
       throw new Error(
         /confirm/i.test(error.message)
           ? "Please confirm your email first: open the message we sent you and tap the link."
-          : "Wrong login or password.",
+          : SIGN_IN_FAILED,
       );
     }
     this.session = null;
@@ -869,6 +808,17 @@ export class SupabaseStore implements DataStore {
     if (problems.length) throw new Error(problems.join(" "));
     const { error } = await this.sb.auth.updateUser({ password: next });
     if (error) throw new Error(error.message);
+    // Clears "must change password" (any role). Not one transaction with the
+    // password itself: that lives in Supabase Auth. Running it again is harmless.
     must(await this.sb.rpc("applicant_password_changed"));
+  }
+
+  async requestPasswordReset(email: string, redirectTo: string) {
+    // Supabase answers the same way for unknown emails, so this never tells
+    // whether an account exists.
+    const { error } = await this.sb.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo });
+    if (error) {
+      throw new Error(error.status === 429 ? "Too many tries. Please wait a few minutes and try again." : error.message);
+    }
   }
 }

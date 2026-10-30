@@ -15,6 +15,7 @@ import EnrollmentList, { inModule, waitsIn, type ListModule } from "./Enrollment
 import { KeyFacts, StudentHeader, StudentTabBody, StudentTabs, defaultTab, relevantTabs, type DetailTab } from "./StudentCard";
 import ActionBox from "./ActionBox";
 import NewApplicationForm from "./NewApplicationForm";
+import PasswordForm from "./PasswordForm";
 import Statement from "./Statement";
 import ClassList from "./ClassList";
 import ClassWorkspace from "./ClassWorkspace";
@@ -118,6 +119,7 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
   /** Last sub-tab the user picked, per module. */
   const [tabMemory, setTabMemory] = useState<Partial<Record<ModuleId, DetailTab>>>({});
   const [newOpen, setNewOpen] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -469,6 +471,9 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
             ) : (
               <p className="text-xs text-muted break-all">{session.email}</p>
             )}
+            <Button variant="secondary" size="sm" className="w-full" data-testid="change-password" onClick={() => { close(); setPwOpen(true); }}>
+              Change password
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -496,6 +501,17 @@ export default function EnrollmentApp({ demo }: { demo: boolean }) {
             setPhoneDetail(true);
             await afterChange("Application saved", id);
           }}
+        />
+      </SidePanel>
+
+      <SidePanel title="Change password" subtitle={isDemo ? `${session.actor.name} (demo)` : session.email} open={pwOpen} onClose={() => setPwOpen(false)} testId="password-panel">
+        <PasswordForm
+          onSave={(next) => store.changePassword(next)}
+          onDone={() => {
+            setPwOpen(false);
+            void afterChange("Password changed.");
+          }}
+          note={isDemo ? "Demo mode: this only changes the practice password in this browser." : undefined}
         />
       </SidePanel>
 

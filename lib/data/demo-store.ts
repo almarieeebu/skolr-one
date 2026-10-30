@@ -1100,4 +1100,10 @@ export class DemoStore implements DataStore, DemoControls {
     if (p) p.must_change_password = false;
     this.persist();
   }
+
+  /** Demo mode sends no email; the page shows the same message as in Supabase mode. */
+  async requestPasswordReset(email: string, redirectTo: string) {
+    void email;
+    void redirectTo;
+  }
 }

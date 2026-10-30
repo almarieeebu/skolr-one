@@ -229,7 +229,8 @@ and `APP-2026-00002` / `password123` (Kevin, needs a fix, with an answered quest
 - `applicant_submit` (callable without login) checks every field again, applies the rate limit and makes the
   application. The server (`app/api/apply/route.ts`) then makes the login and calls `applicant_link_account`
   with a one-time token. `applicant_update_details` (only while Applied), `applicant_request_create /
-  _answer / _close`, `login_email` (number → login email) and `applicant_password_changed` do the rest.
+  _answer / _close`, `login_email` (number + password → login email, see *Accounts and passwords*) and
+  `applicant_password_changed` do the rest.
   A trigger turns the applicant into a student when the status becomes Student ID made.
 
 **`SUPABASE_SERVICE_ROLE_KEY` (optional, server only):** put it in `.env.local` **without** `NEXT_PUBLIC_`.
@@ -239,6 +240,42 @@ papers. **Without it**, the form asks for an email, Supabase sends a "confirm yo
 the applicant confirms before signing in; papers are then uploaded in the portal (unless email confirmation is
 off in your project). No other email service is used: the password is **not** emailed, it is only shown on the
 success screen.
+
+---
+
+## Accounts and passwords
+
+- **Forgot password?** is on `/login` and on the portal sign-in. It asks for the email and sends a link
+  (Supabase sends the email). The page always says *"If that email is on file, we sent a link"*, so nobody
+  can use it to find out which emails have an account. The link opens `/reset-password` (through
+  `/auth/callback`, which signs the person in for that one step), where they type the new password twice.
+- **Change password**: every signed-in person (staff, student, parent, applicant) opens the account menu
+  (bottom of the left rail, or the *Account* tab on phones) → *Change password*. A side panel asks for the
+  new password twice. Rules: at least 8 characters, letters and at least one number.
+- **Sign in with a number** (applicant or student number): the database gives back the email of that
+  login **only when the password is right** (`login_email(number, password)` in `0005_security.sql`).
+  A wrong password and an unknown number get the same answer and the same message
+  (*"Wrong login or password."*). After 10 wrong tries in 15 minutes, signing in with that number is
+  paused for 15 minutes (signing in with the email still works).
+- An applicant account made without an email (`…@applicants.….local`) cannot get a reset email.
+  The school can set a new password for it in Supabase (*Authentication → Users*).
+- **Demo mode:** *Forgot password?* shows the same message and sends nothing; `/reset-password` and
+  *Change password* work with the practice data in your browser.
+
+**Supabase settings for the email link** (*Authentication → URL Configuration*):
+
+- **Site URL:** your app address, for example `https://skolr-one.vercel.app`.
+- **Redirect URLs:** add `https://skolr-one.vercel.app/**` (and `http://localhost:3000/**` for testing on your computer).
+- Supabase's built-in email sender only sends a few emails per hour and is meant for testing. For a real
+  school, set up your own email sender (*Authentication → Emails → SMTP Settings*).
+
+**Before real people use the app: remove the practice logins.** Run `supabase/remove-demo-accounts.sql`
+in the SQL Editor (safe to run again). It takes away the access of every sample login (emails ending in
+`@sample.edu.ph`, and the sample applicant `APP-2026-00001`): their memberships, parent links and student
+links. A sample login that nothing else points to is deleted. One that is named in the sample history,
+payments or grades is switched off instead (banned, with a random password nobody knows), so those records
+stay complete. The sample school and its records are not deleted; to start completely empty, run `reset.sql`
+and the migrations without `seed.sql`.
 
 ---
 
@@ -270,7 +307,10 @@ an ESC/SHS voucher (Sofia) and a student with a carried balance from last year (
    - `supabase/migrations/0002_fees.sql` (fees: setups, discounts, payments, ledger, OR series, closing)
    - `supabase/migrations/0003_grades.sql` (grades: sheets, scores, settings, change requests, history)
    - `supabase/migrations/0004_applicant_portal.sql` (online form, applicant accounts, requests)
+   - `supabase/migrations/0005_security.sql` (safe sign-in with a number, all-or-nothing saves)
    - `supabase/seed.sql` (Sample Academy and demo logins)
+
+   Already ran 0001 to 0004 and have data you want to keep? Run only `0005_security.sql`. It changes no data.
 
    Ran it before, or it stopped half way (error like `type "app_role" already exists`)? Run `supabase/reset.sql` first, then the files above again. It removes only the skolr-one tables and the demo logins.
 
@@ -284,7 +324,8 @@ an ESC/SHS voucher (Sofia) and a student with a carried balance from last year (
    # optional, server only (see Applicant Portal):
    SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
    ```
-4. `npm run dev` and sign in. Seed logins (password `password123`):
+4. Set the Site URL and Redirect URLs for the password reset email (see *Accounts and passwords*).
+5. `npm run dev` and sign in. Seed logins (password `password123`):
    `registrar@sample.edu.ph`, `cashier@sample.edu.ph`, `teacher@sample.edu.ph`,
    `juan@sample.edu.ph` (student), `parent@sample.edu.ph`, `dean@sample.edu.ph`.
    Subject teachers: `teacher.ge@sample.edu.ph`, `teacher.math@sample.edu.ph`,
@@ -305,11 +346,13 @@ The registrar can add these in the Supabase table editor for now.
 | `node scripts/fees-walkthrough.cjs` | Same for the fees flow: setup, load, payments, scholarship, statement, term closing (saves `screenshots/fees-*.png`) |
 | `node scripts/applicant-walkthrough.cjs` | Same for the Applicant Portal: online form, credentials, portal, registrar reply and needs fix, re-upload, student ID (saves `screenshots/applicant-*.png`) |
 | `node scripts/grades-walkthrough.cjs` | Same for grades: encode, submit, return, approve, deadline, change request, report card, phone view (saves `screenshots/grades-*.png`) |
+| `node scripts/security-walkthrough.cjs` | Same for passwords: Forgot password, reset page, Change password (staff app, phone, portal) (saves `screenshots/security-*.png`) |
 
 ## How the code is laid out
 
 ```
-app/                 the one page (/), /login, /apply (public form), /portal, /api/apply
+app/                 the one page (/), /login, /forgot-password, /reset-password, /auth/callback,
+                     /apply (public form), /portal, /api/apply
 components/          list, student card, action box, side panels
 lib/enrollment/      business rules, pure TypeScript + tests
   status.ts          steps and allowed status changes
@@ -336,6 +379,7 @@ lib/applicant/       applicant portal rules, pure TypeScript + tests
   password.ts        temporary passwords (3 words + 2 digits), new password checks
   validate.ts        the 4 form pages, PH mobile numbers
   rules.ts           edit allowed by status, requests open → answered → closed, promotion, portal text
+lib/account/         sign-in messages, password rules, reset link (pure TypeScript + tests)
 lib/data/
   store.ts           the ONE data interface the UI uses
   demo-store.ts      in-browser data (demo mode)
@@ -350,12 +394,14 @@ store saves it. So demo mode and Supabase mode behave the same.
 
 ## Known limits of this MVP
 
-- Applicant Portal: the temporary password is shown on screen only (not emailed). Signing in with a number
-  uses `login_email`, which tells anyone who knows an applicant or student number the email of that login.
+- Applicant Portal: the temporary password is shown on screen only (not emailed).
   The rate limit trusts the IP address the server passes in. A drawn signature is kept in the database (PNG).
 
-- In Supabase mode the non-fee saves for one action (load, status, history) are still separate
-  requests. All money is safe: it is posted by database functions in one transaction each.
+- In Supabase mode every action that writes several rows is one database function (one transaction):
+  `enrollment_create`, `enrollment_apply`, `document_record`, `fees_save_setup`, `grades_save_draft`
+  (`0005_security.sql`), plus the fee and grade functions. Uploading a paper puts the file in storage
+  first; if saving its row then fails, the file stays in storage unused. Changing a password and clearing
+  the "must change password" flag are two steps (the password lives in Supabase Auth); repeating them is harmless.
 - Voiding a payment does not move an enrollment back from "Assessed & paid".
 - Penalties are a ledger row type, but there is no button yet to add late penalties.
 - Closing carries balances owed (> 0) only; a credit (overpayment) stays on the closed term.
@@ -363,7 +409,6 @@ store saves it. So demo mode and Supabase mode behave the same.
 - Prerequisites use posted, passed grades. `completed_codes` on the student is still read as a
   fallback for subjects passed before the school used this app (or in another school).
 - INC does not expire automatically (no "INC becomes 5.00 after one year" rule yet).
-- In Supabase mode, saving a draft grade sheet writes rows one request at a time (posting is one transaction).
 
 ## What's next
 

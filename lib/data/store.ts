@@ -271,6 +271,11 @@ export interface DataStore {
   closeApplicantRequest(requestId: string): Promise<SimpleResult>;
   /** Change own password (clears the "must change password" flag). */
   changePassword(next: string): Promise<void>;
+  /**
+   * Public (no login): email a link to set a new password. Never says whether
+   * the email is on file. `redirectTo` is where the link opens (lib/account resetRedirectUrl).
+   */
+  requestPasswordReset(email: string, redirectTo: string): Promise<void>;
 }
 
 /** Extra controls only the demo store has. */

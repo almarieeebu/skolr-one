@@ -2,7 +2,8 @@
 
 // Sign-in (Supabase mode) with an email, an applicant number (APP-2026-00012)
 // or a student number (SA-2026-0005). Applicants go on to their portal.
-// In demo mode it just links home.
+// A failed sign-in always shows the same message, so it never tells whether a
+// login exists. In demo mode it just links home.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -10,25 +11,7 @@ import Link from "next/link";
 import { isDemoMode } from "@/lib/config";
 import { SupabaseStore } from "@/lib/data/supabase-store";
 import { Button, Field, inputClass } from "@/components/ui";
-
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="grid min-h-dvh place-items-center bg-paper px-4 py-10">
-      <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-[10px] bg-rail text-sm font-bold text-on-rail" aria-hidden>
-            E
-          </span>
-          <div>
-            <p className="text-base font-semibold leading-tight">School enrollment</p>
-            <p className="text-xs text-muted">Registrar, cashier, teachers and families</p>
-          </div>
-        </div>
-        {children}
-      </div>
-    </main>
-  );
-}
+import AuthCard from "@/components/AuthCard";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -39,7 +22,7 @@ export default function LoginPage() {
 
   if (isDemoMode) {
     return (
-      <Card>
+      <AuthCard>
         <div className="rounded-xl border border-line bg-sheet p-6">
           <h1 className="text-xl font-semibold">Demo mode</h1>
           <p className="mt-2 text-sm text-muted">
@@ -52,8 +35,11 @@ export default function LoginPage() {
             <Link href="/portal" className="font-semibold text-ink underline">Applicant Portal</Link>
             <Link href="/apply" className="font-semibold text-ink underline">Enroll online</Link>
           </div>
+          <p className="mt-3 text-center text-sm">
+            <Link href="/forgot-password" className="text-muted underline hover:text-ink" data-testid="forgot-password">Forgot password?</Link>
+          </p>
         </div>
-      </Card>
+      </AuthCard>
     );
   }
 
@@ -74,7 +60,7 @@ export default function LoginPage() {
   };
 
   return (
-    <Card>
+    <AuthCard>
       <form onSubmit={submit} className="space-y-4 rounded-xl border border-line bg-sheet p-6">
         <h1 className="text-xl font-semibold">Sign in</h1>
         <Field label="Email, applicant number or student number">
@@ -83,6 +69,9 @@ export default function LoginPage() {
         <Field label="Password">
           <input type="password" required autoComplete="current-password" className={`${inputClass} min-h-10`} value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
+        <p className="-mt-2 text-right text-sm">
+          <Link href="/forgot-password" className="text-muted underline hover:text-ink" data-testid="forgot-password">Forgot password?</Link>
+        </p>
         {error && <p className="text-sm text-stop" role="alert">{error}</p>}
         <Button type="submit" disabled={busy} className="min-h-10 w-full">
           {busy ? "Signing in" : "Sign in"}
@@ -91,6 +80,6 @@ export default function LoginPage() {
       <p className="mt-4 text-center text-sm text-muted">
         New student? <Link href="/apply" className="font-semibold text-ink underline">Enroll online</Link>
       </p>
-    </Card>
+    </AuthCard>
   );
 }

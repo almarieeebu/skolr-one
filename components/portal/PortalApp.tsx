@@ -15,7 +15,6 @@ import {
   REQUEST_TYPE_LABEL,
   applicantStage,
   canEditApplication,
-  checkNewPassword,
   cleanPersonal,
   cleanProgram,
   emptyApplication,
@@ -35,6 +34,7 @@ import Shell, { DetailPane, type ModuleTab } from "../shell/Shell";
 import { Labeled, PersonalFields, ProgramFields, bigInput } from "../apply/FormFields";
 import { ProgressBar, UploadButton } from "../StudentCard";
 import RequestList from "../RequestList";
+import PasswordForm from "../PasswordForm";
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
@@ -150,6 +150,8 @@ function Login({ store, demo, onDone, error }: { store: DataStore; demo: boolean
         <p className="text-xs text-muted">Students can also sign in here with their student number.</p>
       </form>
       <p className="text-center text-sm text-muted">
+        <Link href="/forgot-password" className="font-semibold text-ink underline" data-testid="portal-forgot-password">Forgot password?</Link>
+        {" · "}
         No account yet? <Link href="/apply" className="font-semibold text-ink underline">Fill in the enrollment form</Link>
       </p>
       {demo && (
@@ -163,55 +165,21 @@ function Login({ store, demo, onDone, error }: { store: DataStore; demo: boolean
 }
 
 function NewPassword({ store, first, onDone }: { store: DataStore; first?: boolean; onDone: () => void }) {
-  const [next, setNext] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [problems, setProblems] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
   return (
-    <form
-      className={first ? "space-y-4 rounded-xl border border-line bg-sheet p-6" : "space-y-4"}
-      data-testid="portal-new-password"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        const p = checkNewPassword(next, confirm);
-        setProblems(p);
-        if (p.length) return;
-        setBusy(true);
-        try {
-          await store.changePassword(next);
-          setNext("");
-          setConfirm("");
-          onDone();
-        } catch (err) {
-          setProblems([err instanceof Error ? err.message : String(err)]);
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {first ? (
-        <div>
-          <h1 className="text-xl font-semibold">Pick your own password</h1>
-          <p className="mt-1 text-sm text-muted">Your password was temporary. Choose a new one you will remember (at least 8 characters, with a number).</p>
-        </div>
-      ) : (
-        <p className="text-sm text-muted">At least 8 characters, with a number.</p>
-      )}
-      <Labeled label="New password">
-        <input data-testid="portal-new-pw" type="password" autoComplete="new-password" className={bigInput} value={next} onChange={(e) => setNext(e.target.value)} />
-      </Labeled>
-      <Labeled label="Type it again">
-        <input data-testid="portal-new-pw2" type="password" autoComplete="new-password" className={bigInput} value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-      </Labeled>
-      {problems.length > 0 && (
-        <ul className="space-y-0.5 text-sm font-medium text-stop" role="alert">
-          {problems.map((p) => <li key={p}>{p}</li>)}
-        </ul>
-      )}
-      <Button type="submit" disabled={busy} className="min-h-11 w-full" data-testid="portal-new-pw-save">
-        {busy ? "Saving" : "Save new password"}
-      </Button>
-    </form>
+    <PasswordForm
+      onSave={(next) => store.changePassword(next)}
+      onDone={onDone}
+      boxed={first}
+      testPrefix="portal"
+      heading={
+        first ? (
+          <div>
+            <h1 className="text-xl font-semibold">Pick your own password</h1>
+            <p className="mt-1 text-sm text-muted">Your password was temporary. Choose a new one you will remember (at least 8 characters, with a number).</p>
+          </div>
+        ) : undefined
+      }
+    />
   );
 }
 
