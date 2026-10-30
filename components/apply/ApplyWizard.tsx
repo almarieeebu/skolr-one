@@ -1,7 +1,7 @@
 "use client";
 
 // The public enrollment form (/apply): 4 short pages, phone first.
-// 1 Personal · 2 Program · 3 Papers · 4 Confirm, then the applicant number and
+// 1 Personal, 2 Program, 3 Papers, 4 Confirm, then the applicant number and
 // temporary password on the success screen.
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -139,117 +139,149 @@ export default function ApplyWizard({
   if (loadError) {
     return (
       <PublicShell school={null} subtitle="Online enrollment form">
-        <p className="rounded-xl border border-danger/30 bg-danger-soft p-4 text-sm text-danger" role="alert">{loadError}</p>
+        <p className="rounded-r-md border-l-2 border-stop bg-stop/7 p-4 text-sm text-stop" role="alert">{loadError}</p>
       </PublicShell>
     );
   }
 
   if (done) {
     return (
-      <PublicShell school={school} subtitle="Online enrollment form" demo={demo}>
+      <PublicShell school={school} subtitle="Online enrollment form" demo={demo} wide>
         <Success creds={done} />
       </PublicShell>
     );
   }
 
+  const titles = ["About the student", "What will you enroll in?", "Papers", "Check and send"];
+  const hints = [
+    "Fields with * are needed.",
+    "Pick College or K to 12 first.",
+    "Take a clear photo with your phone, or pick a PDF. Only the picture is needed now: you can add the other papers later in the Applicant Portal.",
+    "Look over your answers. Press Edit to fix something.",
+  ];
+
   return (
-    <PublicShell school={school} subtitle="Online enrollment form" demo={demo}>
+    <PublicShell school={school} subtitle="Online enrollment form" demo={demo} wide>
       <div ref={top} className="scroll-mt-20" />
-      {page === 0 && <Intro />}
+      <div className="grid gap-6 md:grid-cols-[240px_minmax(0,1fr)] md:gap-10">
+        {/* Steps: a list on the left (desktop), a stepper on top (phones) */}
+        <aside className="md:sticky md:top-24 md:self-start">
+          <h1 className="text-xl font-semibold md:text-2xl">Enroll online</h1>
+          <p className="mt-1 text-sm text-muted">Four short steps, about 10 minutes.</p>
+          <ol className="mt-4 grid grid-cols-4 gap-1.5 md:mt-6 md:grid-cols-1 md:gap-0" aria-label="Form steps" data-testid="ap-steps">
+            {PAGES.map((label, i) => {
+              const done = i < page;
+              const here = i === page;
+              return (
+                <li key={label} aria-current={here ? "step" : undefined}>
+                  {/* phones */}
+                  <div className="md:hidden">
+                    <div className={`h-1 rounded-full ${done ? "bg-go" : here ? "bg-ink" : "bg-line"}`} />
+                    <p className={`mt-1.5 truncate text-xs ${here ? "font-semibold text-ink" : "text-muted"}`}>{i + 1} {label}</p>
+                  </div>
+                  {/* desktop */}
+                  <button
+                    type="button"
+                    disabled={!done}
+                    onClick={() => go(i)}
+                    className={`relative hidden w-full items-center gap-3 rounded-md py-2.5 pr-2 pl-3 text-left text-sm md:flex ${here ? "bg-sheet font-semibold text-ink shadow-[0_0_0_1px_var(--color-line)]" : done ? "text-ink hover:bg-hover" : "text-muted"}`}
+                  >
+                    <span className={`num grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-semibold ${done ? "bg-go text-white" : here ? "bg-ink text-sheet" : "border border-line"}`}>
+                      {done ? (
+                        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M2.5 6.2l2.2 2.2 4.8-4.8" /></svg>
+                      ) : (
+                        i + 1
+                      )}
+                    </span>
+                    {label}
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+          <div className="mt-6 hidden md:block">
+            <Intro />
+          </div>
+        </aside>
 
-      {/* Steps */}
-      <ol className="mb-4 grid grid-cols-4 gap-1.5" aria-label="Form pages" data-testid="ap-steps">
-        {PAGES.map((label, i) => (
-          <li key={label} aria-current={i === page ? "step" : undefined}>
-            <div className={`h-1.5 rounded-full ${i < page ? "bg-brand" : i === page ? "bg-wait" : "bg-line"}`} />
-            <p className={`mt-1.5 truncate text-xs ${i === page ? "font-semibold text-ink" : "text-muted"}`}>
-              {i + 1}. {label}
-            </p>
-          </li>
-        ))}
-      </ol>
+        <div className="min-w-0">
+          {page === 0 && (
+            <div className="mb-5 md:hidden">
+              <Intro />
+            </div>
+          )}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (page < PAGES.length - 1) next();
+              else void send();
+            }}
+            className="space-y-5 rounded-xl border border-line bg-sheet p-4 sm:p-6"
+            data-testid={`ap-page-${page + 1}`}
+            noValidate
+          >
+            <div>
+              <p className="text-xs font-medium text-muted">Step {page + 1} of 4</p>
+              <h2 className="text-xl font-semibold">{titles[page]}</h2>
+              <p className="mt-1 text-sm text-muted">{hints[page]}</p>
+            </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (page < PAGES.length - 1) next();
-          else void send();
-        }}
-        className="space-y-5 rounded-2xl border border-line bg-surface p-4 sm:p-6"
-        data-testid={`ap-page-${page + 1}`}
-        noValidate
-      >
-        <div>
-          <h2 className="text-lg font-semibold">
-            {page === 0 ? "About the student" : page === 1 ? "What will you enroll in?" : page === 2 ? "Papers" : "Check and send"}
-          </h2>
-          <p className="text-sm text-muted">
-            {page === 0
-              ? "Fields with * are needed."
-              : page === 1
-                ? "Pick College or K to 12 first."
-                : page === 2
-                  ? "Take a clear photo with your phone, or pick a PDF. Only the picture is needed now: you can add the other papers later in the Applicant Portal."
-                  : "Look over your answers. Tap Edit to fix something."}
+            {/* Honeypot: hidden from people, bots fill it in. */}
+            <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
+              <label>
+                Website
+                <input tabIndex={-1} autoComplete="off" name="website" value={form.website} onChange={(e) => set("website", e.target.value)} />
+              </label>
+            </div>
+
+            {page === 0 && <PersonalFields f={form} set={set} errors={errors} />}
+            {page === 1 && (
+              terms.length === 0 && info ? (
+                <p className="rounded-r-md border-l-2 border-warn bg-warn/8 p-3 text-sm text-warn">Enrollment is closed right now. Please check again later.</p>
+              ) : (
+                <ProgramFields f={form} set={set} errors={errors} terms={terms} />
+              )
+            )}
+            {page === 2 && <PapersPage form={form} files={files} setFiles={(f) => { setFiles(f); setErrors({}); }} errors={errors} />}
+            {page === 3 && (
+              <ConfirmPage form={form} files={files} set={set} errors={errors} today={today} terms={terms} onEdit={go} />
+            )}
+
+            {sendError && <p className="rounded-r-md border-l-2 border-stop bg-stop/7 px-3 py-2 text-sm font-medium text-stop" role="alert" data-testid="ap-send-error">{sendError}</p>}
+
+            <div className="flex gap-2 border-t border-line pt-4">
+              {page > 0 && (
+                <Button variant="secondary" className="min-h-11 flex-1 md:flex-none md:px-6" onClick={() => go(page - 1)} data-testid="ap-back">
+                  Back
+                </Button>
+              )}
+              <Button type="submit" className="min-h-11 flex-[2] md:ml-auto md:flex-none md:px-8" disabled={busy || (page === 1 && !terms.length)} data-testid={page < 3 ? "ap-next" : "ap-submit"}>
+                {page < 3 ? `Next: ${PAGES[page + 1]}` : busy ? "Sending" : "Send my application"}
+              </Button>
+            </div>
+          </form>
+          <p className="mt-4 text-center text-sm text-muted md:text-left">
+            Already sent the form? <Link href="/portal" className="font-semibold text-ink underline">Open the Applicant Portal</Link>
           </p>
         </div>
-
-        {/* Honeypot: hidden from people, bots fill it in. */}
-        <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
-          <label>
-            Website
-            <input tabIndex={-1} autoComplete="off" name="website" value={form.website} onChange={(e) => set("website", e.target.value)} />
-          </label>
-        </div>
-
-        {page === 0 && <PersonalFields f={form} set={set} errors={errors} />}
-        {page === 1 && (
-          terms.length === 0 && info ? (
-            <p className="rounded-lg bg-wait-soft p-3 text-sm text-wait">Enrollment is closed right now. Please check again later.</p>
-          ) : (
-            <ProgramFields f={form} set={set} errors={errors} terms={terms} />
-          )
-        )}
-        {page === 2 && <PapersPage form={form} files={files} setFiles={(f) => { setFiles(f); setErrors({}); }} errors={errors} />}
-        {page === 3 && (
-          <ConfirmPage form={form} files={files} set={set} errors={errors} today={today} terms={terms} onEdit={go} />
-        )}
-
-        {sendError && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm font-medium text-danger" role="alert" data-testid="ap-send-error">{sendError}</p>}
-
-        <div className="flex gap-2 border-t border-line pt-4">
-          {page > 0 && (
-            <Button variant="secondary" className="min-h-11 flex-1" onClick={() => go(page - 1)} data-testid="ap-back">
-              ← Back
-            </Button>
-          )}
-          <Button type="submit" className="min-h-11 flex-[2]" disabled={busy || (page === 1 && !terms.length)} data-testid={page < 3 ? "ap-next" : "ap-submit"}>
-            {page < 3 ? "Next →" : busy ? "Sending…" : "Send my application"}
-          </Button>
-        </div>
-      </form>
-      <p className="mt-4 text-center text-sm text-muted">
-        Already sent the form? <Link href="/portal" className="font-medium text-brand underline">Open the Applicant Portal</Link>
-      </p>
+      </div>
     </PublicShell>
   );
 }
 
 function Intro() {
   return (
-    <section className="mb-5 space-y-3 rounded-2xl bg-brand-soft p-4 text-sm leading-relaxed text-ink" data-testid="ap-intro">
-      <h1 className="text-xl font-semibold text-brand-dark">Enroll online</h1>
+    <section className="space-y-3 border-l-2 border-line pl-4 text-sm leading-relaxed text-muted" data-testid="ap-intro">
       <p>
-        <strong>Who is this for?</strong> New students and transferees for College, and parents or guardians enrolling a
+        <span className="font-semibold text-ink">Who is this for?</span> New students and transferees for College, and parents or guardians enrolling a
         child in K to 12 (Kinder to Grade 12). Continuing students: ask the registrar.
       </p>
       <p>
-        <strong>What to prepare:</strong> a mobile number, the report card (Form 138), the PSA birth certificate and a clear
-        picture of the student. Transferees: honorable dismissal and TOR too. Phone photos are OK. It takes about 10 minutes.
+        <span className="font-semibold text-ink">What to prepare:</span> a mobile number, the report card (Form 138), the PSA birth certificate and a clear
+        picture of the student. Transferees: honorable dismissal and TOR too. Phone photos are OK.
       </p>
       <p>
-        <strong>After you send it:</strong> you get an <strong>applicant number</strong> and a <strong>temporary password</strong>.
-        Use them in the Applicant Portal to see your progress, fix details and message the registrar.
+        <span className="font-semibold text-ink">After you send it:</span> you get an applicant number and a temporary password for the Applicant Portal.
       </p>
     </section>
   );
@@ -282,14 +314,18 @@ function PapersPage({
         const file = files[d.type];
         const err = errors[d.type];
         return (
-          <li key={d.type} className={`rounded-xl border p-3 ${err ? "border-danger" : file ? "border-brand/40 bg-brand-soft/40" : "border-line"}`}>
+          <li key={d.type} className={`rounded-md border p-3 ${err ? "border-stop" : file ? "border-go/50 bg-go/5" : "border-line"}`}>
             <div className="flex items-start gap-3">
               {d.type === "photo" && preview ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={preview} alt="Student picture" className="h-16 w-16 shrink-0 rounded-lg object-cover" />
               ) : (
-                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg text-lg ${file ? "bg-brand text-white" : "bg-paper text-muted"}`} aria-hidden>
-                  {file ? "✓" : d.type === "photo" ? "☺" : "▤"}
+                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-md text-base ${file ? "bg-go text-white" : "bg-paper text-muted"}`} aria-hidden>
+                  {file ? (
+                    <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 10.5l3.5 3.5 7.5-8" /></svg>
+                  ) : (
+                    <span className="num text-sm font-semibold">{docs.indexOf(d) + 1}</span>
+                  )}
                 </span>
               )}
               <div className="min-w-0 flex-1">
@@ -298,7 +334,7 @@ function PapersPage({
                   {d.required ? <span className="text-danger"> *</span> : <span className="font-normal text-muted"> (can follow)</span>}
                 </p>
                 <p className="text-xs text-muted">{DOC_HELP[d.type]}</p>
-                {file && <p className="mt-1 truncate text-xs font-medium text-brand-dark">{file.name}</p>}
+                {file && <p className="mt-1 truncate text-xs font-medium text-go">{file.name}</p>}
                 {err && <p className="mt-1 text-xs font-medium text-danger" role="alert">{err}</p>}
               </div>
             </div>
@@ -355,15 +391,15 @@ function ConfirmPage({
         ["Contact number", form.contact_no],
         ["Email", form.email || "—"],
         ["Address", form.address],
-        ["Guardian", `${form.guardian_name} · ${form.guardian_contact}`],
+        ["Guardian", `${form.guardian_name}, ${form.guardian_contact}`],
       ]} />
       <SummaryBlock title="Program" onEdit={() => onEdit(1)} rows={[
         ["Track", isCollege ? "College" : "K to 12"],
-        ["School year", term ? `${term.school_year}${term.semester ? ` · ${term.semester} semester` : ""}` : "—"],
+        ["School year", term ? `${term.school_year}${term.semester ? `, ${term.semester} semester` : ""}` : "None"],
         ...(isCollege
           ? ([["Course", form.course], ["Year level", form.level]] as [string, string][])
           : ([
-              ["Grade level", `${form.level}${form.strand ? ` · ${form.strand}` : ""}`],
+              ["Grade level", `${form.level}${form.strand ? ` ${form.strand}` : ""}`],
               ["LRN", form.lrn || "—"],
               ["ESC / voucher", form.esc_voucher ? "Yes" : "No"],
               ["Tuition plan", PLAN_INFO[form.tuition_plan].label],
@@ -372,7 +408,7 @@ function ConfirmPage({
       ]} />
       <SummaryBlock title="Papers" onEdit={() => onEdit(2)} rows={docs.map((d) => [DOC_LABEL[d.type], files[d.type]?.name ?? "Will follow"])} />
 
-      <label className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${errors.certify ? "border-danger" : "border-line"}`}>
+      <label className={`flex items-start gap-3 rounded-md border p-3 text-sm ${errors.certify ? "border-stop" : "border-line"}`}>
         <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" data-testid="ap-certify" checked={form.certify} onChange={(e) => set("certify", e.target.checked)} />
         <span>
           I certify that all the information provided is true and correct.<span className="text-danger"> *</span>
@@ -393,10 +429,10 @@ function ConfirmPage({
 
 function SummaryBlock({ title, rows, onEdit }: { title: string; rows: [string, string][]; onEdit: () => void }) {
   return (
-    <section className="rounded-xl border border-line">
+    <section className="rounded-md border border-line">
       <div className="flex items-center justify-between border-b border-line px-3 py-2">
         <h3 className="text-sm font-semibold">{title}</h3>
-        <button type="button" className="min-h-9 px-2 text-sm font-medium text-brand underline" onClick={onEdit}>Edit</button>
+        <button type="button" className="min-h-9 px-2 text-sm font-semibold text-ink underline" onClick={onEdit}>Edit</button>
       </div>
       <dl className="divide-y divide-line px-3 text-sm">
         {rows.map(([k, v]) => (
@@ -423,48 +459,52 @@ function Success({ creds }: { creds: ApplicantCredentials }) {
     }
   };
   return (
-    <div className="space-y-4" data-testid="ap-success">
-      <div className="rounded-2xl bg-brand-soft p-5 text-center">
-        <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-brand text-2xl text-white" aria-hidden>✓</div>
-        <h1 className="mt-3 text-xl font-semibold text-brand-dark">Application sent!</h1>
-        <p className="mt-1 text-sm">Thank you, {creds.full_name.split(" ")[0]}. The registrar will check your papers in 1 to 3 school days.</p>
+    <div className="mx-auto max-w-xl space-y-5" data-testid="ap-success">
+      <div className="flex items-start gap-4">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-go text-white" aria-hidden>
+          <svg viewBox="0 0 20 20" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 10.5l3.5 3.5 7.5-8" /></svg>
+        </div>
+        <div>
+          <h1 className="text-2xl font-semibold">Application sent</h1>
+          <p className="mt-1 text-sm text-muted">Thank you, {creds.full_name.split(" ")[0]}. The registrar will check your papers in 1 to 3 school days.</p>
+        </div>
       </div>
 
-      <section className="rounded-2xl border-2 border-wait/40 bg-surface p-4">
-        <p className="text-sm font-semibold text-wait">📸 Save or screenshot this now</p>
-        <p className="mt-1 text-xs text-muted">You need these to sign in. We show the password only once.</p>
-        <dl className="mt-3 space-y-3">
+      <section className="rounded-xl border border-ink/25 bg-sheet p-5">
+        <p className="text-sm font-semibold">Save or screenshot this now</p>
+        <p className="mt-0.5 text-sm text-muted">You need these to sign in. We show the password only once.</p>
+        <dl className="mt-4 grid gap-4 sm:grid-cols-2">
           <div>
             <dt className="text-xs text-muted">Applicant number (your username)</dt>
-            <dd className="font-mono text-2xl font-semibold tracking-wide" data-testid="ap-cred-no">{creds.applicant_no}</dd>
+            <dd className="num text-2xl font-semibold" data-testid="ap-cred-no">{creds.applicant_no}</dd>
           </div>
-          <div>
+          <div className="min-w-0">
             <dt className="text-xs text-muted">Temporary password</dt>
-            <dd className="break-words font-mono text-xl font-semibold sm:text-2xl" data-testid="ap-cred-password">{creds.password}</dd>
+            <dd className="num text-xl font-semibold break-words sm:text-2xl" data-testid="ap-cred-password">{creds.password}</dd>
           </div>
         </dl>
         <Button className="mt-4 min-h-11 w-full" variant="secondary" onClick={copy} data-testid="ap-copy">
-          {copied ? "Copied ✓" : "Copy"}
+          {copied ? "Copied" : "Copy number and password"}
         </Button>
       </section>
 
-      <div className="space-y-2 rounded-2xl border border-line bg-surface p-4 text-sm">
+      <div className="space-y-2 text-sm text-muted">
         {creds.email_note === "confirm" && creds.email && (
-          <p>✉️ We sent a message to <strong>{creds.email}</strong>. Open it and tap the link to confirm your email <strong>before</strong> you sign in.</p>
+          <p>We sent a message to <strong className="text-ink">{creds.email}</strong>. Open it and tap the link to confirm your email <strong className="text-ink">before</strong> you sign in.</p>
         )}
         {creds.email_note === "none" && creds.email && (
-          <p>✉️ You can also sign in with your email, <strong>{creds.email}</strong>. We did not email the password, so keep it safe.</p>
+          <p>You can also sign in with your email, <strong className="text-ink">{creds.email}</strong>. We did not email the password, so keep it safe.</p>
         )}
         {creds.email_note === "demo" && (
           <p>Demo mode: no email is sent{creds.email ? `, but you can also sign in with ${creds.email}` : ""}.</p>
         )}
-        {creds.notice && <p className="text-wait">{creds.notice}</p>}
-        {!creds.papers_uploaded && <p className="text-wait">Your papers were not uploaded yet. Add them in the Applicant Portal after you sign in.</p>}
+        {creds.notice && <p className="text-warn">{creds.notice}</p>}
+        {!creds.papers_uploaded && <p className="text-warn">Your papers were not uploaded yet. Add them in the Applicant Portal after you sign in.</p>}
         <p>On your first sign-in you will pick your own password.</p>
       </div>
 
-      <Link href="/portal" className="flex min-h-11 items-center justify-center rounded-lg bg-brand px-4 text-sm font-medium text-white hover:bg-brand-dark" data-testid="ap-go-portal">
-        Go to the Applicant Portal →
+      <Link href="/portal" className="flex min-h-11 items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-on-primary hover:opacity-90" data-testid="ap-go-portal">
+        Go to the Applicant Portal
       </Link>
     </div>
   );

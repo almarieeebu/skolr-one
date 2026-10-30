@@ -11,6 +11,25 @@ import { isDemoMode } from "@/lib/config";
 import { SupabaseStore } from "@/lib/data/supabase-store";
 import { Button, Field, inputClass } from "@/components/ui";
 
+function Card({ children }: { children: React.ReactNode }) {
+  return (
+    <main className="grid min-h-dvh place-items-center bg-paper px-4 py-10">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-[10px] bg-rail text-sm font-bold text-on-rail" aria-hidden>
+            E
+          </span>
+          <div>
+            <p className="text-base font-semibold leading-tight">School enrollment</p>
+            <p className="text-xs text-muted">Registrar, cashier, teachers and families</p>
+          </div>
+        </div>
+        {children}
+      </div>
+    </main>
+  );
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [login, setLogin] = useState("");
@@ -20,21 +39,21 @@ export default function LoginPage() {
 
   if (isDemoMode) {
     return (
-      <main className="grid min-h-dvh place-items-center px-4">
-        <div className="max-w-sm rounded-2xl border border-line bg-surface p-6 text-center">
-          <h1 className="text-lg font-semibold">Demo mode</h1>
+      <Card>
+        <div className="rounded-xl border border-line bg-sheet p-6">
+          <h1 className="text-xl font-semibold">Demo mode</h1>
           <p className="mt-2 text-sm text-muted">
-            No Supabase keys are set, so there is no sign-in. Use the role switcher at the top of the app.
+            No Supabase keys are set, so there is no sign-in. Open the app and switch roles from the account menu at the bottom of the left rail.
           </p>
-          <Link href="/" className="mt-4 inline-block text-sm font-medium text-brand underline">
+          <Link href="/" className="mt-5 flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-on-primary">
             Open the app
           </Link>
-          <p className="mt-3 text-sm text-muted">
-            Applicants: <Link href="/portal" className="font-medium text-brand underline">Applicant Portal</Link> ·{" "}
-            <Link href="/apply" className="font-medium text-brand underline">Enroll online</Link>
-          </p>
+          <div className="mt-4 flex justify-between gap-3 border-t border-line pt-4 text-sm">
+            <Link href="/portal" className="font-semibold text-ink underline">Applicant Portal</Link>
+            <Link href="/apply" className="font-semibold text-ink underline">Enroll online</Link>
+          </div>
         </div>
-      </main>
+      </Card>
     );
   }
 
@@ -55,26 +74,23 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="grid min-h-dvh place-items-center px-4">
-      <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-2xl border border-line bg-surface p-6">
-        <div>
-          <h1 className="text-lg font-semibold">Sign in</h1>
-          <p className="text-sm text-muted">School enrollment</p>
-        </div>
+    <Card>
+      <form onSubmit={submit} className="space-y-4 rounded-xl border border-line bg-sheet p-6">
+        <h1 className="text-xl font-semibold">Sign in</h1>
         <Field label="Email, applicant number or student number">
-          <input required autoComplete="username" placeholder="name@school.edu.ph or APP-2026-00012" className={inputClass} value={login} onChange={(e) => setLogin(e.target.value)} />
+          <input required autoComplete="username" placeholder="name@school.edu.ph" className={`${inputClass} min-h-10`} value={login} onChange={(e) => setLogin(e.target.value)} />
         </Field>
         <Field label="Password">
-          <input type="password" required autoComplete="current-password" className={inputClass} value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input type="password" required autoComplete="current-password" className={`${inputClass} min-h-10`} value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
-        {error && <p className="text-sm text-danger" role="alert">{error}</p>}
-        <Button type="submit" disabled={busy} className="w-full">
-          {busy ? "Signing in…" : "Sign in"}
+        {error && <p className="text-sm text-stop" role="alert">{error}</p>}
+        <Button type="submit" disabled={busy} className="min-h-10 w-full">
+          {busy ? "Signing in" : "Sign in"}
         </Button>
-        <p className="text-center text-xs text-muted">
-          New student? <Link href="/apply" className="font-medium text-brand underline">Enroll online</Link>
-        </p>
       </form>
-    </main>
+      <p className="mt-4 text-center text-sm text-muted">
+        New student? <Link href="/apply" className="font-semibold text-ink underline">Enroll online</Link>
+      </p>
+    </Card>
   );
 }

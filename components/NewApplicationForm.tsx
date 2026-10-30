@@ -117,15 +117,14 @@ export default function NewApplicationForm({
           <select data-testid="term-select" className={inputClass} value={term?.id ?? ""} onChange={(e) => setTermId(e.target.value)}>
             {trackTerms.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.school_year}{t.semester ? ` · ${t.semester} semester` : ""}
+                {t.school_year}{t.semester ? `, ${t.semester} semester` : ""}
               </option>
             ))}
           </select>
         </Field>
       ) : (
         <p className="-mt-2 text-xs text-muted">
-          {term ? `Term: ${term.school_year}${term.semester ? ` · ${term.semester} semester` : ""}` : "No open term."}
-          {" · "}
+          {term ? `Term: ${term.school_year}${term.semester ? `, ${term.semester} semester` : ""}.` : "No open term."}{" "}
           {isCollege ? "CHED rules" : "DepEd rules"}
         </p>
       )}
@@ -136,7 +135,7 @@ export default function NewApplicationForm({
             <option value="">No, new applicant</option>
             {returning.map((s) => (
               <option key={s.id} value={s.id}>
-                {fullName(s)} · {s.student_no}
+                {fullName(s)} ({s.student_no})
               </option>
             ))}
           </select>
@@ -206,7 +205,7 @@ export default function NewApplicationForm({
               {shs && (
                 <Field label="Strand (SHS)">
                   <select className={inputClass} value={form.strand} onChange={(e) => set("strand", e.target.value)}>
-                    <option value="">Pick…</option>
+                    <option value="">Pick a strand</option>
                     {STRANDS.map((s) => <option key={s}>{s}</option>)}
                   </select>
                 </Field>
@@ -274,7 +273,7 @@ export default function NewApplicationForm({
       {error && <p className="text-sm font-medium text-danger" role="alert">{error}</p>}
 
       <Button type="submit" disabled={busy} className="w-full" data-testid="submit-application">
-        {busy ? "Submitting…" : existingId ? "Start enrollment" : "Submit application"}
+        {busy ? "Saving" : existingId ? "Start enrollment" : "Submit application"}
       </Button>
     </form>
   );

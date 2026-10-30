@@ -1,171 +1,261 @@
 "use client";
 
-import { useMemo, useState } from "react";
+// The list column for the enrollment modules (Enrollment, Applicants, Cashier,
+// Students, and the family's own enrollments). Dense 56px rows; a yellow
+// stripe marks the ones waiting on the current user.
+
+import { useMemo, useState, type RefObject } from "react";
 import type { EnrollmentListItem } from "@/lib/data/store";
 import type { Role, Status, Track } from "@/lib/enrollment/types";
 import { STEPS } from "@/lib/enrollment/status";
 import { peso } from "@/lib/fees";
-import { Button, Chip, StatusBadge, inputClass } from "./ui";
+import { Button, Chip, StatusBadge } from "./ui";
+import { ListPane, ListRow } from "./shell/Shell";
 
-const WAITING_LABEL: Record<Role, string> = {
-  registrar: "Needs you",
-  cashier: "Needs payment",
-  dean: "Needs dean",
-  student: "Your turn",
-  parent: "Your turn",
-  teacher: "",
-  applicant: "Your turn",
+export type ListModule = "enrollment" | "applicants" | "cashier" | "students" | "family";
+
+type Filter = "all" | "waiting" | Status | "closed" | "requests" | "new" | "fix" | "balance" | "needs_payment";
+
+const TITLE: Record<ListModule, string> = {
+  enrollment: "Enrollment",
+  applicants: "Applicants",
+  cashier: "Cashier",
+  students: "My students",
+  family: "My enrollments",
 };
 
+/** Which enrollments a module lists. */
+export function inModule(module: ListModule, i: EnrollmentListItem): boolean {
+  if (module === "applicants") return (i.open_requests ?? 0) > 0 || i.status === "applied";
+  if (module === "cashier") return i.status === "load_set" || i.balance > 0;
+  return true;
+}
+
+/** Does this row wait on the current user, in this module? */
+export function waitsIn(module: ListModule, role: Role, i: EnrollmentListItem): boolean {
+  if (!i.waiting) return false;
+  if (module === "applicants") return (i.open_requests ?? 0) > 0 || (i.status === "applied" && !i.fix_note);
+  if (module === "cashier") return role === "cashier";
+  return true;
+}
+
+const FILTERS: Record<ListModule, { id: Filter; label: string }[]> = {
+  enrollment: [
+    { id: "all", label: "All" },
+    { id: "waiting", label: "Waiting on you" },
+    ...STEPS.map((s) => ({ id: s.status as Filter, label: s.short })),
+    { id: "closed", label: "Closed" },
+  ],
+  applicants: [
+    { id: "all", label: "All" },
+    { id: "requests", label: "Open requests" },
+    { id: "new", label: "New" },
+    { id: "fix", label: "Needs fix" },
+  ],
+  cashier: [
+    { id: "all", label: "All" },
+    { id: "needs_payment", label: "Needs downpayment" },
+    { id: "balance", label: "With balance" },
+  ],
+  students: [],
+  family: [],
+};
+
+/** "2026-2027 1st sem" -> "1st sem 26-27"; "2026-2027 (K to 12)" -> "SY 26-27". */
+export function shortTerm(label: string): string {
+  const m = /^(\d{4})-(\d{4})\s+(.*)$/.exec(label);
+  if (!m) return label;
+  const years = `${m[1].slice(2)}-${m[2].slice(2)}`;
+  return m[3].startsWith("(") ? `SY ${years}` : `${m[3]} ${years}`;
+}
+
+function matches(f: Filter, i: EnrollmentListItem, waiting: boolean): boolean {
+  switch (f) {
+    case "all":
+      return true;
+    case "waiting":
+      return waiting;
+    case "closed":
+      return i.status === "rejected" || i.status === "withdrawn";
+    case "requests":
+      return (i.open_requests ?? 0) > 0;
+    case "new":
+      return i.status === "applied" && !i.fix_note;
+    case "fix":
+      return i.status === "applied" && !!i.fix_note;
+    case "balance":
+      return i.balance > 0;
+    case "needs_payment":
+      return i.status === "load_set";
+    default:
+      return i.status === f;
+  }
+}
+
 export default function EnrollmentList({
+  module,
   items,
   role,
   selectedId,
   onSelect,
   onNew,
+  searchRef,
+  listRef,
 }: {
+  module: ListModule;
   items: EnrollmentListItem[];
   role: Role;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onNew?: () => void;
+  searchRef: RefObject<HTMLInputElement | null>;
+  listRef: RefObject<HTMLUListElement | null>;
 }) {
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<Status | "all" | "closed">("all");
+  const [filter, setFilter] = useState<Filter>("all");
   const [track, setTrack] = useState<Track | "all">("all");
   const [level, setLevel] = useState<string>("all");
-  // Registrar: only enrollments with applicant requests waiting for a reply.
-  const [requestsOnly, setRequestsOnly] = useState(false);
 
+  const mine = useMemo(() => items.filter((i) => inModule(module, i)), [items, module]);
   const levels = useMemo(
-    () => [...new Set(items.filter((i) => track === "all" || i.track === track).map((i) => i.level))].sort(),
-    [items, track],
+    () => [...new Set(mine.filter((i) => track === "all" || i.track === track).map((i) => i.level))].sort(),
+    [mine, track],
   );
 
-  const shown = items.filter((i) => {
-    if (requestsOnly && !(i.open_requests ?? 0)) return false;
+  const shown = mine.filter((i) => {
+    if (!matches(filter, i, waitsIn(module, role, i))) return false;
     if (track !== "all" && i.track !== track) return false;
     if (level !== "all" && i.level !== level) return false;
-    if (status === "closed") {
-      if (i.status !== "rejected" && i.status !== "withdrawn") return false;
-    } else if (status !== "all" && i.status !== status) return false;
     if (q) {
-      const hay = `${i.student_name} ${i.student_no ?? ""} ${i.course ?? ""} ${i.level} ${i.strand ?? ""}`.toLowerCase();
+      const hay = `${i.student_name} ${i.student_no ?? ""} ${i.course ?? ""} ${i.level} ${i.strand ?? ""} ${i.term_label}`.toLowerCase();
       if (!hay.includes(q.toLowerCase())) return false;
     }
     return true;
   });
 
-  const waitingCount = items.filter((i) => i.waiting).length;
-  const requestCount = items.reduce((n, i) => n + (i.open_requests ?? 0), 0);
-  const isFamily = role === "student" || role === "parent";
+  const waitingCount = mine.filter((i) => waitsIn(module, role, i)).length;
+  const isFamily = module === "family";
+  const filters = FILTERS[module];
+  const showTrack = module === "enrollment" || module === "cashier" || module === "students";
+
+  const subtitle =
+    module === "family" || module === "students"
+      ? `${mine.length} ${mine.length === 1 ? "enrollment" : "enrollments"}`
+      : waitingCount > 0
+        ? `${waitingCount} waiting on you, ${mine.length} in all`
+        : `${mine.length} in all, none waiting on you`;
 
   return (
-    <aside className="flex flex-col rounded-2xl border border-line bg-surface lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)]">
-      <div className="space-y-3 border-b border-line p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h1 className="text-base font-semibold">{isFamily ? "My enrollments" : role === "teacher" ? "My students" : "Enrollments"}</h1>
-            {WAITING_LABEL[role] && (
-              <p className="text-xs text-muted">
-                {waitingCount} waiting on you
-              </p>
+    <ListPane
+      ref={listRef}
+      title={TITLE[module]}
+      subtitle={subtitle}
+      testId={`list-${module}`}
+      listTestId="enrollment-list"
+      action={
+        onNew ? (
+          <Button size="sm" onClick={onNew} data-testid="new-application">
+            New application
+          </Button>
+        ) : undefined
+      }
+      search={
+        isFamily
+          ? undefined
+          : { value: q, onChange: setQ, placeholder: "Search name, ID, course", inputRef: searchRef }
+      }
+      filters={
+        filters.length > 0 || showTrack ? (
+          <div className="space-y-2">
+            {filters.length > 0 && (
+              <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none]" role="group" aria-label="Filter">
+                {filters.map((f) => (
+                  <Chip key={f.id} active={filter === f.id} onClick={() => setFilter(f.id)} testId={`filter-${f.id}`}>
+                    {f.label}
+                    {f.id === "waiting" && waitingCount > 0 && <span className="num">{waitingCount}</span>}
+                    {f.id === "requests" && <span className="num">{mine.filter((i) => (i.open_requests ?? 0) > 0).length}</span>}
+                  </Chip>
+                ))}
+              </div>
+            )}
+            {showTrack && (
+              <div className="flex gap-2">
+                <select
+                  aria-label="Track"
+                  className="h-7 min-w-0 flex-1 rounded-md border border-line bg-sheet px-2 text-xs text-ink"
+                  value={track}
+                  onChange={(e) => {
+                    setTrack(e.target.value as Track | "all");
+                    setLevel("all");
+                  }}
+                >
+                  <option value="all">College and K to 12</option>
+                  <option value="college">College</option>
+                  <option value="k12">K to 12</option>
+                </select>
+                <select
+                  aria-label="Level"
+                  className="h-7 min-w-0 flex-1 rounded-md border border-line bg-sheet px-2 text-xs text-ink"
+                  value={level}
+                  onChange={(e) => setLevel(e.target.value)}
+                >
+                  <option value="all">All levels</option>
+                  {levels.map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+                </select>
+              </div>
             )}
           </div>
-          {onNew && (
-            <Button onClick={onNew} data-testid="new-application" className="min-h-9 px-3">
-              + New application
-            </Button>
-          )}
-        </div>
-        <input
-          type="search"
-          placeholder="Search name, ID, course…"
-          aria-label="Search"
-          className={inputClass}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
-          <Chip active={status === "all"} onClick={() => setStatus("all")}>All</Chip>
-          {STEPS.map((s) => (
-            <Chip key={s.status} active={status === s.status} onClick={() => setStatus(s.status)}>
-              {s.short}
-            </Chip>
-          ))}
-          <Chip active={status === "closed"} onClick={() => setStatus("closed")}>Closed</Chip>
-        </div>
-        {role === "registrar" && (
-          <div className="flex items-center gap-1.5" data-testid="requests-chip">
-            <Chip active={requestsOnly} onClick={() => setRequestsOnly(!requestsOnly)}>
-              💬 Applicant requests{requestCount > 0 ? ` (${requestCount})` : ""}
-            </Chip>
-          </div>
-        )}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Chip active={track === "all"} onClick={() => { setTrack("all"); setLevel("all"); }}>Both</Chip>
-          <Chip active={track === "college"} onClick={() => { setTrack("college"); setLevel("all"); }}>College</Chip>
-          <Chip active={track === "k12"} onClick={() => { setTrack("k12"); setLevel("all"); }}>K to 12</Chip>
-          <select
-            aria-label="Level"
-            className="ml-auto rounded-full border border-line bg-surface px-2 py-1 text-xs text-muted"
-            value={level}
-            onChange={(e) => setLevel(e.target.value)}
-          >
-            <option value="all">All levels</option>
-            {levels.map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <ul className="flex-1 divide-y divide-line overflow-y-auto" data-testid="enrollment-list">
-        {shown.map((i) => (
-          <li key={i.id}>
-            <button
-              type="button"
-              data-testid={`row-${i.id}`}
-              onClick={() => onSelect(i.id)}
-              className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors ${
-                selectedId === i.id ? "bg-brand-soft" : "hover:bg-paper"
-              }`}
-            >
-              <span
-                aria-hidden
-                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${i.waiting ? "bg-wait" : "bg-transparent"}`}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium">{i.student_name}</span>
-                  <StatusBadge status={i.status} />
-                </span>
-                <span className="mt-0.5 block truncate text-xs text-muted">
-                  {i.track === "college" ? `${i.course ?? ""} · ${i.level}` : `${i.level}${i.strand ? ` · ${i.strand}` : ""}`}
-                  {" · "}
-                  {i.student_no ?? "no ID yet"}
-                </span>
-                <span className="block truncate text-[11px] text-muted/80">{i.term_label}</span>
-                {(i.waiting || (role === "cashier" && i.balance > 0)) && (
-                  <span className="mt-1 block text-xs font-medium text-wait">
-                    {i.waiting ? WAITING_LABEL[role] : `Balance ${peso(i.balance)}`}
-                    {(i.open_requests ?? 0) > 0 && ` · 💬 ${i.open_requests} ${i.open_requests === 1 ? "request" : "requests"}`}
-                  </span>
+        ) : undefined
+      }
+      empty={
+        shown.length === 0 ? (
+          <li className="px-6 py-10 text-center text-sm text-muted">
+            {mine.length === 0
+              ? isFamily
+                ? "No enrollment yet. Press New application to start."
+                : module === "applicants"
+                  ? "No new applications or open requests. New ones from the online form show up here."
+                  : module === "cashier"
+                    ? "No balances to collect. Students show up here once their load is set."
+                    : "Nothing here yet. Press New application to add a student."
+              : "No match. Clear the search or pick another filter."}
+          </li>
+        ) : undefined
+      }
+    >
+      {shown.map((i) => {
+        const waiting = waitsIn(module, role, i);
+        const meta = i.track === "college" ? `${i.course ?? ""} ${i.level}`.trim() : `${i.level}${i.strand ? ` ${i.strand}` : ""}`;
+        return (
+          <ListRow key={i.id} selected={selectedId === i.id} waiting={waiting} onClick={() => onSelect(i.id)} testId={`row-${i.id}`}>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center justify-between gap-2">
+                <span className="truncate text-sm font-semibold">{i.student_name}</span>
+                {module === "cashier" ? (
+                  <span className={`num shrink-0 text-sm font-semibold ${i.balance > 0 ? "text-ink" : "text-go"}`}>{peso(i.balance)}</span>
+                ) : (
+                  <StatusBadge status={i.status} needsFix={!!i.fix_note} />
                 )}
               </span>
-            </button>
-          </li>
-        ))}
-        {shown.length === 0 && (
-          <li className="px-4 py-10 text-center text-sm text-muted">
-            {items.length === 0
-              ? isFamily
-                ? "No enrollment yet. Tap “New application” to start."
-                : "Nothing here yet."
-              : "No match. Try another filter."}
-          </li>
-        )}
-      </ul>
-    </aside>
+              <span className="mt-0.5 flex items-center gap-2.5 text-xs text-muted">
+                <span className="truncate">{meta}</span>
+                <span className="num shrink-0">{i.student_no ?? "No ID yet"}</span>
+                <span className="ml-auto shrink-0 truncate">
+                  {(i.open_requests ?? 0) > 0 ? (
+                    <span className="font-medium text-ink">{i.open_requests} {i.open_requests === 1 ? "request" : "requests"}</span>
+                  ) : module === "cashier" ? (
+                    <StatusBadge status={i.status} />
+                  ) : (
+                    shortTerm(i.term_label)
+                  )}
+                </span>
+              </span>
+            </span>
+          </ListRow>
+        );
+      })}
+    </ListPane>
   );
 }

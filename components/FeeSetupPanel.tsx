@@ -21,7 +21,7 @@ import {
   type FeeSetup,
   type OrSeries,
 } from "@/lib/fees";
-import { Button, Chip, Field, Warnings, inputClass } from "./ui";
+import { Button, Chip, Field, StickyActions, Warnings, inputClass } from "./ui";
 import { fmtDay } from "./fees-ui";
 
 const COURSES = ["BSIT", "BSCS", "BSBA", "BSEd", "BSN"];
@@ -45,7 +45,7 @@ function Items({
   return (
     <div className="space-y-2">
       {items.map((it, i) => (
-        <div key={i} className={`grid gap-2 ${groups.length > 1 ? "grid-cols-[minmax(0,1fr)_7rem_auto] sm:grid-cols-[minmax(0,1fr)_8.5rem_7rem_auto]" : "grid-cols-[minmax(0,1fr)_7rem_auto]"}`}>
+        <div key={i} className={`grid gap-2 ${groups.length > 1 ? "grid-cols-[minmax(0,1fr)_6rem_auto] sm:grid-cols-[minmax(0,1fr)_7.5rem_6rem_auto]" : "grid-cols-[minmax(0,1fr)_6rem_auto]"}`}>
           <input aria-label="Item name" className={inputClass} value={it.name} onChange={(ev) => upd(i, { name: ev.target.value })} data-testid={`${testPrefix}-name-${i}`} />
           {groups.length > 1 && (
             <select aria-label="Group" className={`${inputClass} hidden px-2 text-xs text-muted sm:block`} value={it.group ?? groups[0]} onChange={(ev) => upd(i, { group: ev.target.value as FeeGroup })}>
@@ -54,7 +54,7 @@ function Items({
           )}
           <input aria-label="Amount" className={`${inputClass} text-right`} inputMode="decimal" value={String(it.amount)} onChange={(ev) => upd(i, { amount: num(ev.target.value) })} data-testid={`${testPrefix}-amount-${i}`} />
           <button type="button" aria-label={`Remove ${it.name}`} className="rounded-md px-2 text-muted hover:text-danger" onClick={() => onChange(items.filter((_, j) => j !== i))}>
-            ✕
+            Remove
           </button>
         </div>
       ))}
@@ -100,7 +100,7 @@ export default function FeeSetupPanel({ store, onDone }: { store: DataStore; onD
     else setSubjects([]);
   }, [term, termSetups, store]);
 
-  if (!term || !draft || !series) return <p className="text-sm text-muted">Loading…</p>;
+  if (!term || !draft || !series) return <p className="text-sm text-muted">Loading</p>;
 
   const isCollege = term.track === "college";
   const closed = !!term.closed_at;
@@ -140,6 +140,8 @@ export default function FeeSetupPanel({ store, onDone }: { store: DataStore; onD
 
   return (
     <div className="space-y-5" data-testid="fee-setup">
+      <div className="grid gap-x-10 gap-y-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="space-y-5">
       <Field label="Term">
         <select data-testid="fs-term" className={inputClass} value={termId} onChange={(ev) => setTermId(ev.target.value)}>
           {terms.map((t) => (
@@ -215,64 +217,6 @@ export default function FeeSetupPanel({ store, onDone }: { store: DataStore; onD
           )}
         </div>
 
-        {isCollege && subjects.length > 0 && (
-          <div>
-            <h3 className="mb-1 text-sm font-semibold">Subjects: lab fee and major flag</h3>
-            <div className="overflow-x-auto rounded-xl border border-line">
-              <table className="w-full min-w-[440px] text-sm">
-                <thead className="bg-paper text-left text-xs text-muted">
-                  <tr>
-                    <th className="px-2 py-1.5 font-medium">Subject</th>
-                    <th className="px-2 py-1.5 text-right font-medium">Units</th>
-                    <th className="px-2 py-1.5 font-medium">Lab fee (₱)</th>
-                    <th className="px-2 py-1.5 font-medium">Major</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {subjects.map((o, i) => (
-                    <tr key={o.id}>
-                      <td className="px-2 py-1.5"><span className="font-mono text-xs">{o.code}</span> <span className="text-muted">{o.title}</span></td>
-                      <td className="px-2 py-1.5 text-right">{o.units}</td>
-                      <td className="px-2 py-1.5">
-                        <input aria-label={`Lab fee ${o.code}`} className={`${inputClass} w-24 py-1 text-right`} inputMode="decimal" value={String(o.lab_fee)}
-                          onChange={(ev) => setSubjects(subjects.map((x, j) => (j === i ? { ...x, lab_fee: num(ev.target.value) } : x)))} />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <input type="checkbox" aria-label={`${o.code} is a major subject`} className="h-4 w-4 accent-[var(--color-brand)]" checked={o.is_major}
-                          data-testid={`fs-major-${o.code}`}
-                          onChange={(ev) => setSubjects(subjects.map((x, j) => (j === i ? { ...x, is_major: ev.target.checked } : x)))} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="mt-1 text-xs text-muted">Lab fee and major flag belong to the subject offering of this term (all scopes).</p>
-          </div>
-        )}
-
-        {!isCollege && (
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold">Tuition plans</h3>
-            {draft.plans.map((p, pi) => {
-              const setPlan = (patch: Partial<typeof p>) => set("plans", draft.plans.map((x, j) => (j === pi ? { ...x, ...patch } : x)));
-              return (
-                <div key={p.plan} className="space-y-2 rounded-xl border border-line p-3">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <p className="text-sm font-medium">{PLAN_INFO[p.plan as TuitionPlan].label}</p>
-                    <p className="text-sm">Plan total <span className="font-semibold tabular-nums" data-testid={`fs-plan-total-${p.plan}`}>{peso(planTotal(draft, p))}</span></p>
-                  </div>
-                  <Items items={p.items} onChange={(items) => setPlan({ items })} groups={["tuition", "other"]} testPrefix={`fs-plan-${p.plan}`} />
-                  <Field label="Installment surcharge (% of tuition)">
-                    <input className={`${inputClass} w-28`} inputMode="decimal" value={String(p.surcharge_pct)} onChange={(ev) => setPlan({ surcharge_pct: num(ev.target.value) })} />
-                  </Field>
-                  <p className="text-xs text-muted">Due: {p.due_dates.map((d) => fmtDay(d)).join(" · ")}</p>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
         <div>
           <h3 className="mb-2 text-sm font-semibold">Miscellaneous fees</h3>
           <Items items={draft.misc_items} onChange={(items) => set("misc_items", items)} groups={["misc", "other"]} testPrefix="fs-misc" />
@@ -311,18 +255,84 @@ export default function FeeSetupPanel({ store, onDone }: { store: DataStore; onD
               <input className={inputClass} inputMode="numeric" value={String(series.pad)} onChange={(ev) => setSeries({ ...series, pad: Math.min(12, Math.max(1, Math.floor(num(ev.target.value)))) })} />
             </Field>
           </div>
-          <p className="mt-1 text-xs text-muted">Next OR: <span className="font-mono">{formatOr(series)}</span> (one series for the whole school)</p>
+          <p className="mt-1 text-xs text-muted">Next OR: <span className="num">{formatOr(series)}</span> (one series for the whole school)</p>
         </div>
       </fieldset>
+      </div>
+      <fieldset disabled={closed} className="min-w-0 space-y-5">
+        {isCollege && subjects.length > 0 && (
+          <div>
+            <h3 className="mb-1 text-sm font-semibold">Subjects: lab fee and major flag</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[440px] text-sm">
+                <thead className="border-b border-line text-left text-xs text-muted">
+                  <tr>
+                    <th className="px-2 py-1.5 font-medium">Subject</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Units</th>
+                    <th className="px-2 py-1.5 font-medium">Lab fee (₱)</th>
+                    <th className="px-2 py-1.5 font-medium">Major</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line/70">
+                  {subjects.map((o, i) => (
+                    <tr key={o.id}>
+                      <td className="px-2 py-1.5"><span className="num font-medium">{o.code}</span> <span className="text-muted">{o.title}</span></td>
+                      <td className="px-2 py-1.5 text-right">{o.units}</td>
+                      <td className="px-2 py-1.5">
+                        <input aria-label={`Lab fee ${o.code}`} className="num w-24 rounded-md border border-line bg-sheet px-2 py-1 text-right text-sm focus:border-ink focus:outline-none" inputMode="decimal" value={String(o.lab_fee)}
+                          onChange={(ev) => setSubjects(subjects.map((x, j) => (j === i ? { ...x, lab_fee: num(ev.target.value) } : x)))} />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <input type="checkbox" aria-label={`${o.code} is a major subject`} className="h-4 w-4 accent-[var(--color-brand)]" checked={o.is_major}
+                          data-testid={`fs-major-${o.code}`}
+                          onChange={(ev) => setSubjects(subjects.map((x, j) => (j === i ? { ...x, is_major: ev.target.checked } : x)))} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-1 text-xs text-muted">Lab fee and major flag belong to the subject offering of this term (all scopes).</p>
+          </div>
+        )}
 
-      <Warnings items={problems} />
-      {error && <p className="text-sm font-medium text-danger" role="alert">{error}</p>}
-      {!closed && (
-        <Button className="w-full" disabled={busy || problems.length > 0} onClick={save} data-testid="fs-save">
-          {busy ? "Saving…" : "Save fee setup"}
-        </Button>
-      )}
-      <p className="text-xs text-muted">New rates apply when a load is picked or changed. Fees already posted stay as they are.</p>
+        {!isCollege && (
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold">Tuition plans</h3>
+            {draft.plans.map((p, pi) => {
+              const setPlan = (patch: Partial<typeof p>) => set("plans", draft.plans.map((x, j) => (j === pi ? { ...x, ...patch } : x)));
+              return (
+                <div key={p.plan} className="space-y-2 border-t border-line pt-3 first:border-t-0 first:pt-0">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="text-sm font-medium">{PLAN_INFO[p.plan as TuitionPlan].label}</p>
+                    <p className="text-sm">Plan total <span className="font-semibold tabular-nums" data-testid={`fs-plan-total-${p.plan}`}>{peso(planTotal(draft, p))}</span></p>
+                  </div>
+                  <Items items={p.items} onChange={(items) => setPlan({ items })} groups={["tuition", "other"]} testPrefix={`fs-plan-${p.plan}`} />
+                  <Field label="Installment surcharge (% of tuition)">
+                    <input className={`${inputClass} w-28`} inputMode="decimal" value={String(p.surcharge_pct)} onChange={(ev) => setPlan({ surcharge_pct: num(ev.target.value) })} />
+                  </Field>
+                  <p className="text-xs text-muted">Due: {p.due_dates.map((d) => fmtDay(d)).join(", ")}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+      </fieldset>
+      </div>
+
+      <StickyActions>
+        <div className="min-w-0 flex-1 space-y-1">
+          <Warnings items={problems} />
+          {error && <p className="text-sm font-medium text-stop" role="alert">{error}</p>}
+          {!problems.length && !error && <p className="text-xs text-muted">New rates apply when a load is picked or changed. Fees already posted stay as they are.</p>}
+        </div>
+        {!closed && (
+          <Button disabled={busy || problems.length > 0} onClick={save} data-testid="fs-save">
+            {busy ? "Saving" : "Save fee setup"}
+          </Button>
+        )}
+      </StickyActions>
     </div>
   );
 }

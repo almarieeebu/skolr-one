@@ -6,16 +6,16 @@ import type { SheetStatus, SpecialMark } from "@/lib/grades";
 import { SHEET_STATUS_LABEL } from "@/lib/grades";
 
 const SHEET_STYLE: Record<SheetStatus | "none", string> = {
-  none: "bg-slate-100 text-slate-600",
-  draft: "bg-amber-100 text-amber-800",
-  returned: "bg-danger-soft text-danger",
-  submitted: "bg-sky-100 text-sky-800",
-  posted: "bg-emerald-100 text-emerald-800",
+  none: "pill-muted",
+  draft: "pill-muted",
+  returned: "pill-warn",
+  submitted: "pill-ink",
+  posted: "pill-go",
 };
 
 export function SheetChip({ status }: { status: SheetStatus | null }) {
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${SHEET_STYLE[status ?? "none"]}`}>
+    <span className={`pill ${SHEET_STYLE[status ?? "none"]}`}>
       {status ? SHEET_STATUS_LABEL[status] : "Not started"}
     </span>
   );

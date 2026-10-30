@@ -1,46 +1,191 @@
 @import "tailwindcss";
 
-/* Design tokens: a calm paper-like background, deep teal for action,
-   warm amber for "waiting on you". */
+/* Design tokens (see docs/design.md). Slate navy ink, paper background,
+   white sheets, 1px lines. Sunflower yellow (--highlight) marks ONLY what is
+   waiting on the current user. */
 @theme {
-  --color-paper: #f6f5f1;
-  --color-surface: #ffffff;
-  --color-ink: #1c2430;
-  --color-muted: #5f6b7a;
-  --color-line: #e3e1da;
-  --color-brand: #0f6b62;
-  --color-brand-dark: #0a524b;
-  --color-brand-soft: #e3f1ee;
-  --color-wait: #b45309;
-  --color-wait-soft: #fdf3e2;
-  --color-danger: #b42318;
-  --color-danger-soft: #fdecea;
-  --font-sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --color-ink: #16233f;
+  --color-paper: #f7f9fb;
+  --color-sheet: #ffffff;
+  --color-line: #dce3ea;
+  --color-highlight: #ffd23f;
+  --color-on-highlight: #16233f;
+  --color-go: #1f7a5c;
+  --color-warn: #b5541c;
+  --color-stop: #b42335;
+  --color-muted: #5c6b7e;
+  /* Rail and primary buttons. Same as ink in the light theme. */
+  --color-rail: #16233f;
+  --color-on-rail: #ffffff;
+  --color-primary: #16233f;
+  --color-on-primary: #ffffff;
+  /* Subtle fills: hover rows, selected row, stat blocks. */
+  --color-hover: #eef2f6;
+  --color-select: #e6ecf5;
+
+  /* Older names, kept so every component uses the same palette. */
+  --color-surface: var(--color-sheet);
+  --color-brand: var(--color-primary);
+  --color-brand-dark: var(--color-primary);
+  --color-brand-soft: var(--color-select);
+  --color-wait: var(--color-warn);
+  --color-wait-soft: color-mix(in srgb, var(--color-warn) 11%, var(--color-sheet));
+  --color-danger: var(--color-stop);
+  --color-danger-soft: color-mix(in srgb, var(--color-stop) 10%, var(--color-sheet));
+
+  --font-sans: var(--font-jakarta), "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+
+  /* Type scale 12 / 13 / 14 / 16 / 20 / 24 */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.35;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.45;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.35;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.3;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 6px;
+  --radius-xl: 10px;
+  --radius-2xl: 10px;
+
+  --animate-panel-in: panel-in 180ms ease-out;
+  --animate-fade-in: fade-in 180ms ease-out;
+  --animate-modal-in: modal-in 160ms ease-out;
+}
+
+@keyframes panel-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-in {
+  from { transform: translateY(6px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Dark theme: the same roles, tuned for a dark background. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-ink: #e5eaf2;
+    --color-paper: #0f1522;
+    --color-sheet: #161e2e;
+    --color-line: #2a3549;
+    --color-highlight: #ffd23f;
+    --color-on-highlight: #16233f;
+    --color-go: #5cc49c;
+    --color-warn: #ec9a66;
+    --color-stop: #f2808e;
+    --color-muted: #9aa7b8;
+    --color-rail: #0a0f1a;
+    --color-on-rail: #ffffff;
+    --color-primary: #c9d6ec;
+    --color-on-primary: #0f1522;
+    --color-hover: #1d2638;
+    --color-select: #22304a;
+    color-scheme: dark;
+  }
 }
 
 :root {
   color-scheme: light;
 }
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
 
+/* Phones: 16px body text (and 13px small text). */
+@media (max-width: 767px) {
+  :root {
+    --text-xs: 0.8125rem;
+    --text-sm: 1rem;
+  }
+}
+
+html,
 body {
   background: var(--color-paper);
+}
+body {
   color: var(--color-ink);
   font-family: var(--font-sans);
+  font-size: var(--text-sm);
   -webkit-font-smoothing: antialiased;
 }
 
+/* Numbers line up: money, grades, units, IDs. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Focus ring that is easy to see on every control. */
-:where(button, a, input, select, textarea, summary):focus-visible {
-  outline: 2px solid var(--color-brand);
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-ink);
   outline-offset: 2px;
+}
+.on-rail :where(button, a, select, [tabindex]):focus-visible {
+  outline-color: #ffffff;
+}
+:where(input, select, textarea):focus-visible {
+  outline-offset: 0;
+}
+
+/* Status pills: a ~11% tint of the status color, with the color as text. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 999px;
+  padding: 0.0625rem 0.5rem;
+  font-size: var(--text-xs);
+  line-height: 1.25rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pill-ink { background: color-mix(in srgb, var(--color-ink) 9%, transparent); color: var(--color-ink); }
+.pill-muted { background: color-mix(in srgb, var(--color-muted) 12%, transparent); color: var(--color-muted); }
+.pill-go { background: color-mix(in srgb, var(--color-go) 12%, transparent); color: var(--color-go); }
+.pill-warn { background: color-mix(in srgb, var(--color-warn) 12%, transparent); color: var(--color-warn); }
+.pill-stop { background: color-mix(in srgb, var(--color-stop) 11%, transparent); color: var(--color-stop); }
+
+/* Thin scrollbars inside the panes. */
+.pane-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Printing: only the statement of account (components/Statement.tsx) or the
    report card / grade slip (components/ReportCard.tsx) shows. The button
    pressed sets body[data-print]; the statement is the default. */
 @media print {
+  html,
   body {
     background: #fff;
+    color: #000;
   }
   body[data-print="report"] [data-print-doc="statement"],
   body:not([data-print="report"]) [data-print-doc="report"] {
